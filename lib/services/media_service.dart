@@ -10,14 +10,22 @@ class MediaService {
   /// Losslessly muxes a video-only stream with an audio stream (stream copy,
   /// no re-encode → original quality preserved, exactly what YouTube serves).
   static Future<String> muxVideoAudio(String videoPath, String audioPath, String outPath) async {
-    final session = await FFmpegKit.executeWithArguments([
+    final args = <String>[
       '-y',
       '-i', videoPath,
       '-i', audioPath,
       '-c', 'copy',
-      '-movflags', '+faststart',
-      outPath,
-    ]);
+    ];
+    // +faststart is a private option of the MP4 (mov) muxer only — passing it
+    // for other containers (webm/mkv, i.e. VP9/AV1 1440p-8K downloads) can
+    // reject the whole command and lose the download. Guard it by extension.
+    final lower = outPath.toLowerCase();
+    if (lower.endsWith('.mp4') || lower.endsWith('.m4v') || lower.endsWith('.mov')) {
+      args.addAll(['-movflags', '+faststart']);
+    }
+    args.add(outPath);
+
+    final session = await FFmpegKit.executeWithArguments(args);
     final rc = await session.getReturnCode();
     if (ReturnCode.isSuccess(rc)) return outPath;
     throw Exception('Mux failed (${rc?.getValue()}): ${await _logs(session)}');

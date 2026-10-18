@@ -183,13 +183,23 @@ class DownloadManager extends ChangeNotifier {
 
       // 3) download paired audio (high-quality DASH needs muxing)
       String outPath = mainPath;
+      String finalExt = task.option.ext;
       if (audio != null) {
         final audioPath = '${tmpDir.path}/${task.id}.audio.${audio.container.name == 'mp4' ? 'm4a' : 'webm'}';
         await _downloadToFile(audio.url.toString(), audioPath, task, counted: false);
 
         _set(task, DownloadStatus.processing);
         outPath = '${tmpDir.path}/${task.id}.out.${task.option.ext}';
-        await MediaService.muxVideoAudio(mainPath, audioPath, outPath);
+        try {
+          await MediaService.muxVideoAudio(mainPath, audioPath, outPath);
+        } catch (_) {
+          // Never lose a high-quality download: MKV accepts every codec
+          // combination YouTube serves (VP9/AV1 + Opus included), so retry
+          // the lossless mux into an .mkv before giving up.
+          outPath = '${tmpDir.path}/${task.id}.out.mkv';
+          await MediaService.muxVideoAudio(mainPath, audioPath, outPath);
+          finalExt = 'mkv';
+        }
         _tryDelete(mainPath);
         _tryDelete(audioPath);
       } else if (task.option.mp3) {
@@ -203,11 +213,11 @@ class DownloadManager extends ChangeNotifier {
       _stopIntent.remove(task.id);
       final subDir = task.type == DownloadType.video ? StorageDirs.video : StorageDirs.audio;
       final displayName =
-          '${sanitizeFileName(task.title)} [${task.option.label}].${task.option.ext}';
+          '${sanitizeFileName(task.title)} [${task.option.label}].$finalExt';
       final saved = await StorageService.publish(
         tempPath: outPath,
         displayName: displayName,
-        mime: StorageService.mimeFor(task.option.ext, task.type == DownloadType.video),
+        mime: StorageService.mimeFor(finalExt, task.type == DownloadType.video),
         subDir: subDir,
         public: savePublic,
       );
