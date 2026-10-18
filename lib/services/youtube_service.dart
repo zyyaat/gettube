@@ -1,6 +1,5 @@
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
-import '../core/formatters.dart';
 import '../models/quality_option.dart';
 
 /// Wraps YoutubeExplode: search, video metadata, and the full stream manifest.
@@ -64,13 +63,13 @@ class YoutubeService {
       options.add(QualityOption(
         kind: QualityKind.muxed,
         videoTag: s.tag,
-        label: _videoLabel(s.videoQualityLabel, s.videoResolution.height, s.framerate.framesPerSecond),
-        container: _containerLabel(s.container.type, prettyVideoCodec(s.videoCodec ?? '')),
-        codec: prettyVideoCodec(s.videoCodec ?? ''),
-        fps: s.framerate.framesPerSecond,
-        sizeBytes: s.fileSize.totalBytes,
-        ext: s.container.type,
-        srcExt: s.container.type,
+        label: _videoLabel(s.qualityLabel, s.videoResolution.height, s.framerate.framesPerSecond.toInt()),
+        container: _containerLabel(s.container.name, prettyVideoCodec(s.videoCodec)),
+        codec: prettyVideoCodec(s.videoCodec),
+        fps: s.framerate.framesPerSecond.toInt(),
+        sizeBytes: s.size.totalBytes,
+        ext: s.container.name,
+        srcExt: s.container.name,
       ));
     }
 
@@ -88,19 +87,19 @@ class YoutubeService {
       });
 
     for (final s in videoOnly) {
-      final container = s.container.type; // mp4 | webm
+      final container = s.container.name; // mp4 | webm
       final pair = container == 'mp4' ? (bestAac ?? bestOpus) : (bestOpus ?? bestAac);
-      final isH264 = prettyVideoCodec(s.videoCodec ?? '') == 'H264';
+      final isH264 = prettyVideoCodec(s.videoCodec) == 'H264';
       final isHighRes = s.videoResolution.height >= 1080;
       options.add(QualityOption(
         kind: QualityKind.videoOnly,
         videoTag: s.tag,
         audioTag: pair?.tag,
-        label: _videoLabel(s.videoQualityLabel, s.videoResolution.height, s.framerate.framesPerSecond),
-        container: _containerLabel(container, prettyVideoCodec(s.videoCodec ?? '')),
-        codec: prettyVideoCodec(s.videoCodec ?? ''),
-        fps: s.framerate.framesPerSecond,
-        sizeBytes: s.fileSize.totalBytes + (pair?.fileSize.totalBytes ?? 0),
+        label: _videoLabel(s.qualityLabel, s.videoResolution.height, s.framerate.framesPerSecond.toInt()),
+        container: _containerLabel(container, prettyVideoCodec(s.videoCodec)),
+        codec: prettyVideoCodec(s.videoCodec),
+        fps: s.framerate.framesPerSecond.toInt(),
+        sizeBytes: s.size.totalBytes + (pair?.size.totalBytes ?? 0),
         ext: container,
         srcExt: container,
         // Recommend the highest H264/MP4 1080p row: plays everywhere.
@@ -119,7 +118,7 @@ class YoutubeService {
         container: 'M4A (AAC)',
         codec: 'AAC',
         fps: 0,
-        sizeBytes: bestAac.fileSize.totalBytes,
+        sizeBytes: bestAac.size.totalBytes,
         ext: 'm4a',
         srcExt: 'm4a',
       ));
@@ -132,7 +131,7 @@ class YoutubeService {
         container: 'WEBM (Opus)',
         codec: 'Opus',
         fps: 0,
-        sizeBytes: bestOpus.fileSize.totalBytes,
+        sizeBytes: bestOpus.size.totalBytes,
         ext: 'webm',
         srcExt: 'webm',
       ));
@@ -147,9 +146,9 @@ class YoutubeService {
         container: 'MP3',
         codec: 'MP3',
         fps: 0,
-        sizeBytes: seconds > 0 ? (192000 ~/ 8) * seconds : mp3Source.fileSize.totalBytes,
+        sizeBytes: seconds > 0 ? (192000 ~/ 8) * seconds : mp3Source.size.totalBytes,
         ext: 'mp3',
-        srcExt: mp3Source.container.type == 'mp4' ? 'm4a' : 'webm',
+        srcExt: mp3Source.container.name == 'mp4' ? 'm4a' : 'webm',
         mp3: true,
       ));
     }
@@ -167,7 +166,7 @@ class YoutubeService {
 
   static AudioOnlyStreamInfo? _pickAudio(List<AudioOnlyStreamInfo> sorted, String codecPrefix) {
     for (final a in sorted) {
-      if (a.audioCodec != null && a.audioCodec!.toLowerCase().startsWith(codecPrefix)) return a;
+      if (a.audioCodec.toLowerCase().startsWith(codecPrefix)) return a;
     }
     return null;
   }

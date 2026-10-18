@@ -97,7 +97,7 @@ class VideoCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${video.viewCount != null ? formatCount(video.viewCount!) : ''} ${L.views}'
+                      '${video.engagement.viewCount > 0 ? formatCount(video.engagement.viewCount) : ''} ${L.views}'
                       '${video.uploadDate != null ? ' • ${video.uploadDate!.year}/${video.uploadDate!.month}/${video.uploadDate!.day}' : ''}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,

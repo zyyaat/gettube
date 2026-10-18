@@ -99,10 +99,10 @@ class _VideoScreenState extends State<VideoScreen> {
               const SizedBox(width: 4),
               Flexible(child: Text(v.author, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium)),
               const SizedBox(width: 12),
-              if (v.viewCount != null) ...[
+              if (v.engagement.viewCount > 0) ...[
                 Icon(Icons.visibility_outlined, size: 16, color: theme.colorScheme.onSurfaceVariant),
                 const SizedBox(width: 4),
-                Text('${formatCount(v.viewCount!)} ${L.views}', style: theme.textTheme.bodyMedium),
+                Text('${formatCount(v.engagement.viewCount)} ${L.views}', style: theme.textTheme.bodyMedium),
               ],
               if (v.duration != null) ...[
                 const SizedBox(width: 12),

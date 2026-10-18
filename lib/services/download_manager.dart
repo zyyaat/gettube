@@ -111,6 +111,9 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
+  /// Alias used by the downloads tile: re-queue a failed/canceled task.
+  void retry(DownloadTask t) => resume(t);
+
   void cancel(DownloadTask t) {
     if (t.status == DownloadStatus.queued) {
       _cleanupParts(t);
@@ -176,13 +179,13 @@ class DownloadManager extends ChangeNotifier {
 
       // 2) download main stream (resumable)
       final mainPath = '${tmpDir.path}/${task.id}.main.${task.option.srcExt}';
-      await _downloadToFile(main.url, mainPath, task);
+      await _downloadToFile(main.url.toString(), mainPath, task);
 
       // 3) download paired audio (high-quality DASH needs muxing)
       String outPath = mainPath;
       if (audio != null) {
-        final audioPath = '${tmpDir.path}/${task.id}.audio.${audio.container.type == 'mp4' ? 'm4a' : 'webm'}';
-        await _downloadToFile(audio.url, audioPath, task, counted: false);
+        final audioPath = '${tmpDir.path}/${task.id}.audio.${audio.container.name == 'mp4' ? 'm4a' : 'webm'}';
+        await _downloadToFile(audio.url.toString(), audioPath, task, counted: false);
 
         _set(task, DownloadStatus.processing);
         outPath = '${tmpDir.path}/${task.id}.out.${task.option.ext}';
@@ -245,7 +248,7 @@ class DownloadManager extends ChangeNotifier {
     task.cancelToken = token;
 
     final file = File(savePath);
-    int received = file.existsSync() ? file.length() : 0;
+    int received = file.existsSync() ? file.lengthSync() : 0;
 
     final Response<ResponseBody> resp = await _dio.get<ResponseBody>(
       url,

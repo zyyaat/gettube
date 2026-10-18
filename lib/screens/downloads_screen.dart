@@ -185,7 +185,7 @@ class _SavedTile extends StatelessWidget {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: Text(L.cancel)),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
             onPressed: () {
               Navigator.pop(ctx);
               onDelete();

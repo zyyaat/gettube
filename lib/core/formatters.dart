@@ -1,5 +1,5 @@
-/// Pure formatting helpers (bytes, durations, counts, speeds).
-/// Hand-rolled to avoid pulling in `intl` for a handful of functions.
+// Pure formatting helpers (bytes, durations, counts, speeds).
+// Hand-rolled to avoid pulling in `intl` for a handful of functions.
 
 String formatBytes(num bytes) {
   if (bytes <= 0) return '0 B';
