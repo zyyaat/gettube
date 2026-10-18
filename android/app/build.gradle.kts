@@ -45,6 +45,19 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    packaging {
+        jniLibs {
+            // Hard-exclude non-arm32 native libs. ffmpeg AARs bundle every ABI
+            // and ndk.abiFilters alone did not strip them (AGP 8 + Flutter DSL),
+            // so drop them explicitly at packaging time (~41 MB saved).
+            excludes += setOf(
+                "lib/arm64-v8a/**",
+                "lib/x86/**",
+                "lib/x86_64/**",
+            )
+        }
+    }
 }
 
 kotlin {
