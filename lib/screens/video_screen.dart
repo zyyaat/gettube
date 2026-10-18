@@ -4,6 +4,7 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../core/formatters.dart';
 import '../core/i18n.dart';
+import '../models/quality_option.dart';
 import '../services/youtube_service.dart';
 import '../widgets/quality_sheet.dart';
 

@@ -176,8 +176,14 @@ class YoutubeService {
 
   static String _videoLabel(String raw, int height, int fps) {
     var label = raw.isNotEmpty ? raw : '${height}p';
-    if (fps >= 50 && !label.endsWith('60')) label = '$label${fps >= 60 ? 60 : fps}';
-    if (height >= 2160 && !label.contains('4K')) label = label; // keep numeric labels consistent
+    // Append fps suffix only when the label does not already contain it
+    // (protects against e.g. "720p50" + "50").
+    if (fps >= 50 && !label.endsWith(fps.toString())) {
+      label = '$label${fps >= 60 ? 60 : fps}';
+    }
+    // Friendly marketing labels, SnapTube-style.
+    if (height == 2160) label = '$label • 4K';
+    if (height == 4320) label = '$label • 8K';
     return label;
   }
 

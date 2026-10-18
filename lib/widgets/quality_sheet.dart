@@ -148,7 +148,7 @@ class _OptionTile extends StatelessWidget {
         ),
         subtitle: Text(
           '${option.container} • ${formatBytes(option.sizeBytes)}'
-          '${option.kind == QualityKind.videoOnly ? ' • ${L.processing.split("…").first}' : ''}',
+          '${option.kind == QualityKind.videoOnly ? ' • DASH' : ''}',
           style: theme.textTheme.bodySmall,
         ),
         trailing: Icon(Icons.download_rounded, color: theme.colorScheme.primary),
