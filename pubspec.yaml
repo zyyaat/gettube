@@ -16,8 +16,6 @@ dependencies:
   youtube_explode_dart: ^2.5.3
 
   # DASH muxing (video+audio) for HD/4K/8K + MP3 conversion — Full GPL build
-  ffmpeg_kit_flutter_new: ^4.6.7
-
   # Download engine: resumable (Range) parallel downloads
   dio: ^5.7.0
 
@@ -31,6 +29,7 @@ dependencies:
   flutter_local_notifications: ^17.2.3
 
   cupertino_icons: ^1.0.8
+  ffmpeg_kit_flutter_new_audio: ^2.5.7
 
 dev_dependencies:
   flutter_test:
