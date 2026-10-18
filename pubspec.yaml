@@ -1,0 +1,41 @@
+name: gettube
+description: "GetTube — Free & open-source video downloader. Every quality YouTube offers (144p to 8K), zero ads, zero paywalls."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # YouTube parsing: search + full stream manifest (all qualities) without any API key
+  youtube_explode_dart: ^2.5.3
+
+  # DASH muxing (video+audio) for HD/4K/8K + MP3 conversion — Full GPL build
+  ffmpeg_kit_flutter_new: ^4.6.7
+
+  # Download engine: resumable (Range) parallel downloads
+  dio: ^5.7.0
+
+  provider: ^6.1.2
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  permission_handler: ^11.3.1
+  url_launcher: ^6.3.0
+  wakelock_plus: ^1.2.8
+  open_filex: ^4.5.0
+  flutter_local_notifications: ^17.2.3
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
