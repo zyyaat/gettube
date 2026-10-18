@@ -7,7 +7,20 @@
 
 Flutter • Open Source • كل جودات يوتيوب (144p → 8K) • All YouTube qualities unlocked
 
+[![Export APK](https://github.com/zyyaat/gettube/actions/workflows/export.yml/badge.svg)](https://github.com/zyyaat/gettube/actions/workflows/export.yml)
+[![Latest APK](https://img.shields.io/badge/⬇️_Download-arm32_APK-red)](https://github.com/zyyaat/gettube/releases/latest)
+
 </div>
+
+---
+
+## 📦 حمّل الـ APK الجاهز / Grab the ready APK
+
+كل push على `main` بيتبنى تلقائياً على GitHub Actions ويُنشر كـ **Release** — مش محتاج تبني بنفسك:
+
+> Every push to `main` is built automatically and published as a GitHub Release (arm32 / armeabi-v7a):
+
+**→ [آخر إصدار / Latest release](https://github.com/zyyaat/gettube/releases/latest)** — نزّل ملف `GetTube-arm32-r*.apk` وثبّته على أي موبايل أندرويد (ARM 32-bit أو أعلى).
 
 ---
 
@@ -110,6 +123,19 @@ flutter build apk --release
 ---
 
 ## ☁️ الرفع على GitHub / Publishing
+
+### التصدير التلقائي / Auto-export (مفعّل ✅)
+الريبو فيه workflow جاهز: `.github/workflows/export.yml` — على كل `git push` لفرع `main`:
+1. يبني APK **arm32 (armeabi-v7a)** نسخة release
+2. ينشره في **GitHub Releases** (tag `build-<رقم>`) — بدون استهلاك مساحة Actions
+3. يرفع artifact إضافي مدة صلاحيتك 7 أيام
+
+```bash
+git push origin main        # البناء يبدأ تلقائياً
+# تابع: Actions → Export APK → Release جاهز بعد ~10 دقائق
+```
+
+### يدوياً / Manual build
 
 ```bash
 cd gettube
