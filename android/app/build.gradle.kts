@@ -29,6 +29,13 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Package ONLY armeabi-v7a (arm32): ffmpeg AARs otherwise bundle
+        // arm64-v8a + x86_64 too, adding ~41 MB of dead weight.
+        // arm64 devices run the v7a APK natively through backward compatibility.
+        ndk {
+            abiFilters += listOf("armeabi-v7a")
+        }
     }
 
     buildTypes {
