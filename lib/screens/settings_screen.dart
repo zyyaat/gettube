@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../core/constants.dart';
 import '../core/i18n.dart';
+import 'diagnostics_screen.dart';
 import '../services/storage_service.dart';
 import '../state/settings_controller.dart';
 
@@ -118,6 +119,18 @@ class SettingsScreen extends StatelessWidget {
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(L.cacheCleared)));
               }
             },
+          ),
+
+          _sectionTitle(context, L.diagnostics),
+
+          // Error log — lets the user report problems without adb
+          ListTile(
+            leading: const Icon(Icons.bug_report_outlined),
+            title: Text(L.errorLog),
+            subtitle: Text(L.errorLogHint),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const DiagnosticsScreen()),
+            ),
           ),
 
           _sectionTitle(context, L.about),

@@ -102,6 +102,15 @@ class L {
       : '• Every quality is free forever — up to 8K, zero ads.\n• We respect your privacy: no accounts, no tracking, no data collection.\n• Download only permitted content for personal use and respect creators\' rights.';
   static String get letsGo => _ar ? 'يلا نبدأ' : "Let's go";
 
+  // ---- Diagnostics ----
+  static String get diagnostics => _ar ? 'التشخيص' : 'Diagnostics';
+  static String get errorLog => _ar ? 'سجل الأخطاء' : 'Error log';
+  static String get errorLogHint => _ar ? 'إذا واجهت أي مشكلة، انسخ السجل وأرسله لنا' : 'If you hit a problem, copy the log and send it to us';
+  static String get errorLogEmpty => _ar ? 'لا أخطاء مسجلة — كل شيء يعمل بشكل ممتاز' : 'No errors recorded — all good';
+  static String get copyError => _ar ? 'نسخ السجل' : 'Copy log';
+  static String get logCopied => _ar ? 'تم نسخ السجل' : 'Log copied';
+  static String get clearLog => _ar ? 'مسح السجل' : 'Clear log';
+
   // ---- Misc ----
   static String get storageDenied => _ar ? 'لم يتم منح إذن التخزين' : 'Storage permission denied';
   static String get qualityNotAvailable => _ar ? 'هذه الجودة غير متاحة حالياً، جرّب جودة أخرى' : 'This quality is unavailable now, try another';

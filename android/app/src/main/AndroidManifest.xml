@@ -52,6 +52,13 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Force the battle-tested Skia renderer instead of Impeller.
+             Impeller's OpenGL-ES backend is known to render a blank/white
+             screen on some older Mali/Adreno GPUs (common on arm32 devices). -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
     </application>
 
     <!-- Required by Flutter tooling -->
