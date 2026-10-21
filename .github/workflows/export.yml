@@ -14,9 +14,9 @@ concurrency:
 
 jobs:
   export:
-    name: Build arm32 APK (armeabi-v7a)
+    name: Build APKs (arm32 + universal)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,6 +48,23 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: flutter build apk --release --target-platform android-arm
 
+      # Save arm32 output BEFORE the universal build overwrites app-release.apk
+      - name: Keep arm32 output
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/GetTube-arm32-r${{ github.run_number }}.apk"
+
+      # Universal APK: arm32 (old phones) + arm64 (modern/64-bit-only phones)
+      # + x86_64 (emulators, Chromebooks). Same FIXED release key => installs
+      # over any previous GetTube build.
+      - name: Build APK (universal: arm32 + arm64 + x86_64)
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/android/app/upload-keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: flutter build apk --release --target-platform android-arm,android-arm64,android-x64 -Puniversal=true
+
       # Same keystore => same SHA256 on every build. This line lets us prove
       # signature consistency across builds (updates install over old ones).
       - name: Print signing certificate SHA256
@@ -55,8 +72,7 @@ jobs:
 
       - name: Prepare output
         run: |
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk "dist/GetTube-arm32-r${{ github.run_number }}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/GetTube-universal-r${{ github.run_number }}.apk"
           ls -la dist/
 
       # Primary export: GitHub Release (does NOT consume Actions storage quota)
@@ -69,11 +85,14 @@ jobs:
           body: |
             🚀 **GetTube build ${{ github.run_number }}**
 
-            - APK: **arm32 (armeabi-v7a)** — release build
+            - نسختان للتحميل:
+              - `GetTube-universal-r*.apk` — **تُثبَّت على أي جهاز حديث أو قديم** (arm32 + arm64 + x86_64) — الموصى بها
+              - `GetTube-arm32-r*.apk` — خفيفة الحجم (~41MB أصغر) للهواتف القديمة فقط
             - كل الجودات مجاناً: 144p حتى 8K — بدون اشتراك وبدون جدار دفع
             - دمج تلقائي للصوت مع الفيديو (DASH) + تحويل MP3
+            - موقّعة بمفتاح ثابت: التحديثات الجديدة تُثبَّت فوق القديمة مباشرة
 
-            > حمّل ملف `GetTube-arm32-r*.apk` من قسم Assets تحت 👇
+            > حمّل ملف APK من قسم Assets تحت 👇
           make_latest: true
 
       # Secondary: artifact with short retention so it never fills Actions storage
@@ -82,6 +101,6 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: GetTube-arm32-APK
+          name: GetTube-APKs
           path: dist/*.apk
           retention-days: 7

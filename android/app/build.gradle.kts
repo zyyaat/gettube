@@ -14,6 +14,12 @@ val keystorePass = System.getenv("KEYSTORE_PASSWORD")
 val keystoreAlias = System.getenv("KEY_ALIAS") ?: "gettube"
 val keyPass = System.getenv("KEY_PASSWORD")
 
+// Universal ABI build: pass -Puniversal=true to flutter build apk to lift the
+// arm32-only filters below so arm64-v8a + x86_64 native libs get packaged too
+// (installs on ANY device — old arm32 phones, modern 64-bit-only phones,
+// emulators, Chromebooks). Default (no flag) keeps the slim arm32-only APK.
+val universalAbis = (project.findProperty("universal") as? String) == "true"
+
 android {
     namespace = "com.gettubeapp.gettube"
     compileSdk = flutter.compileSdkVersion
@@ -43,8 +49,11 @@ android {
         // Package ONLY armeabi-v7a (arm32): ffmpeg AARs otherwise bundle
         // arm64-v8a + x86_64 too, adding ~41 MB of dead weight.
         // arm64 devices run the v7a APK natively through backward compatibility.
-        ndk {
-            abiFilters += listOf("armeabi-v7a")
+        // Skipped with -Puniversal=true (all ABIs packaged instead).
+        if (!universalAbis) {
+            ndk {
+                abiFilters += listOf("armeabi-v7a")
+            }
         }
     }
 
@@ -71,14 +80,17 @@ android {
 
     packaging {
         jniLibs {
-            // Hard-exclude non-arm32 native libs. ffmpeg AARs bundle every ABI
-            // and ndk.abiFilters alone did not strip them (AGP 8 + Flutter DSL),
-            // so drop them explicitly at packaging time (~41 MB saved).
-            excludes += setOf(
-                "lib/arm64-v8a/**",
-                "lib/x86/**",
-                "lib/x86_64/**",
-            )
+            // Hard-exclude non-arm32 native libs (arm32-only builds). ffmpeg
+            // AARs bundle every ABI and ndk.abiFilters alone did not strip
+            // them (AGP 8 + Flutter DSL), so drop them explicitly at packaging
+            // time (~41 MB saved). Skipped with -Puniversal=true.
+            if (!universalAbis) {
+                excludes += setOf(
+                    "lib/arm64-v8a/**",
+                    "lib/x86/**",
+                    "lib/x86_64/**",
+                )
+            }
         }
     }
 }
