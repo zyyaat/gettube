@@ -13,6 +13,7 @@ import '../core/formatters.dart';
 import '../core/i18n.dart';
 import '../models/download_task.dart';
 import '../models/quality_option.dart';
+import 'crash_log.dart';
 import 'media_service.dart';
 import 'notification_service.dart';
 import 'storage_service.dart';
@@ -158,36 +159,63 @@ class DownloadManager extends ChangeNotifier {
     try {
       _set(task, DownloadStatus.fetching);
 
-      // 1) resolve exact streams by tag (fresh manifest = fresh URLs)
-      final manifest = await YoutubeService.getManifest(VideoId(task.videoId));
-      final streams = manifest.streams.toList();
-      StreamInfo? main = _findByTag(streams, task.option.videoTag);
-      if (main == null) {
-        throw Exception(L.qualityNotAvailable);
-      }
-      StreamInfo? audio;
-      if (task.option.audioTag != null) {
-        audio = _findByTag(streams, task.option.audioTag!);
-      }
-
-      task.total = task.option.sizeBytes;
-      task.received = 0;
-      _set(task, DownloadStatus.downloading);
-
       final tmpDir = Directory('${(await getTemporaryDirectory()).path}/dl');
       await tmpDir.create(recursive: true);
 
-      // 2) download main stream (resumable)
-      final mainPath = '${tmpDir.path}/${task.id}.main.${task.option.srcExt}';
-      await _downloadToFile(main.url.toString(), mainPath, task);
+      // 1) resolve + download.
+      //
+      // CRITICAL: with the ANDROID client, YouTube rejects (HTTP 403)
+      // downloading MORE THAN ONE stream minted from the SAME manifest.
+      // High-quality DASH downloads need TWO streams (video + audio), so
+      // each stream is resolved from its OWN freshly-minted manifest.
+      // If a 403/410 still happens (expired URL, carrier IP rotation,
+      // rate limiting), the whole resolve is retried once more with
+      // everything fresh — .part bytes are kept for resuming.
+      late String mainPath;
+      String? audioPath;
+      for (int pass = 0; pass < 2; pass++) {
+        try {
+          final mainStream = await _resolveStream(task, task.option.videoTag);
 
-      // 3) download paired audio (high-quality DASH needs muxing)
+          task.total = task.option.sizeBytes;
+          task.received = 0;
+          _set(task, DownloadStatus.downloading);
+
+          mainPath = '${tmpDir.path}/${task.id}.main.${task.option.srcExt}';
+          await _downloadToFile(mainStream.url.toString(), mainPath, task);
+
+          audioPath = null;
+          if (task.option.audioTag != null) {
+            // SEPARATE manifest for the paired audio — two streams from one
+            // manifest is exactly what YouTube rejects with 403.
+            final audioStream =
+                await _resolveStream(task, task.option.audioTag!);
+            final audioExt =
+                audioStream.container.name == 'mp4' ? 'm4a' : 'webm';
+            audioPath = '${tmpDir.path}/${task.id}.audio.$audioExt';
+            await _downloadToFile(
+              audioStream.url.toString(),
+              audioPath,
+              task,
+              counted: false,
+            );
+          }
+          break;
+        } on DioException catch (e) {
+          final code = e.response?.statusCode;
+          final retriable = code == 403 || code == 410 || code == 404;
+          if (pass == 0 && retriable && !_stopIntent.containsKey(task.id)) {
+            await Future<void>.delayed(const Duration(milliseconds: 800));
+            continue; // fresh manifests, same .part files
+          }
+          rethrow;
+        }
+      }
+
+      // 2) mux / convert
       String outPath = mainPath;
       String finalExt = task.option.ext;
-      if (audio != null) {
-        final audioPath = '${tmpDir.path}/${task.id}.audio.${audio.container.name == 'mp4' ? 'm4a' : 'webm'}';
-        await _downloadToFile(audio.url.toString(), audioPath, task, counted: false);
-
+      if (audioPath != null) {
         _set(task, DownloadStatus.processing);
         outPath = '${tmpDir.path}/${task.id}.out.${task.option.ext}';
         try {
@@ -209,9 +237,10 @@ class DownloadManager extends ChangeNotifier {
         _tryDelete(mainPath);
       }
 
-      // 4) publish to destination
+      // 3) publish to destination
       _stopIntent.remove(task.id);
-      final subDir = task.type == DownloadType.video ? StorageDirs.video : StorageDirs.audio;
+      final subDir =
+          task.type == DownloadType.video ? StorageDirs.video : StorageDirs.audio;
       final displayName =
           '${sanitizeFileName(task.title)} [${task.option.label}].$finalExt';
       final saved = await StorageService.publish(
@@ -236,7 +265,12 @@ class DownloadManager extends ChangeNotifier {
         _set(task, DownloadStatus.canceled);
       } else {
         task.speedBps = 0;
-        task.error = e.toString();
+        if (e is DioException && e.response?.statusCode == 403) {
+          CrashLog.write('DOWNLOAD 403: ${task.title}', e.stackTrace);
+          task.error = L.streamRejected;
+        } else {
+          task.error = e.toString();
+        }
         _set(task, DownloadStatus.failed);
       }
     } finally {
@@ -244,16 +278,64 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  StreamInfo? _findByTag(List<StreamInfo> streams, int tag) {
-    for (final s in streams) {
+  /// Resolves a single stream by tag from a FRESH manifest (fresh minted
+  /// URLs, independent download session).
+  Future<StreamInfo> _resolveStream(DownloadTask task, int tag) async {
+    final manifest = await YoutubeService.getManifest(VideoId(task.videoId));
+    for (final s in manifest.streams) {
       if (s.tag == tag) return s;
     }
-    return null;
+    throw Exception(L.qualityNotAvailable);
   }
 
-  /// Resumable streaming download: keeps `.part` bytes and continues with a
-  /// Range request; tracks live speed on the task.
-  Future<void> _downloadToFile(String url, String savePath, DownloadTask task, {bool counted = true}) async {
+  /// User-Agents mirroring the clients youtube_explode mints stream URLs
+  /// with. Some networks enforce that the download UA matches the client
+  /// that requested the manifest — mismatched UA is rejected with 403.
+  static const List<String> _uaLadder = [
+    // ANDROID client (default manifest source)
+    'com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip',
+    // IOS client (secondary manifest source)
+    'com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)',
+    // Desktop web (watch page client)
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.18 Safari/537.36',
+  ];
+
+  /// Resumable streaming download with a User-Agent fallback ladder.
+  /// Keeps `.part` bytes across attempts and continues with a Range
+  /// request; tracks live speed on the task.
+  Future<void> _downloadToFile(
+    String url,
+    String savePath,
+    DownloadTask task, {
+    bool counted = true,
+  }) async {
+    for (int i = 0; i < _uaLadder.length; i++) {
+      final isLast = i == _uaLadder.length - 1;
+      try {
+        await _downloadToFileWithUa(
+          url,
+          savePath,
+          task,
+          _uaLadder[i],
+          counted: counted,
+        );
+        return;
+      } on DioException catch (e) {
+        final code = e.response?.statusCode;
+        // 403/401: try the next client fingerprint with the same .part.
+        if (!isLast && (code == 403 || code == 401)) continue;
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> _downloadToFileWithUa(
+    String url,
+    String savePath,
+    DownloadTask task,
+    String ua, {
+    bool counted = true,
+  }) async {
     final token = CancelToken();
     task.cancelToken = token;
 
@@ -264,7 +346,7 @@ class DownloadManager extends ChangeNotifier {
       url,
       options: Options(
         responseType: ResponseType.stream,
-        headers: {'range': 'bytes=$received-'},
+        headers: {'range': 'bytes=$received-', 'user-agent': ua},
         validateStatus: (c) => c != null && c < 500,
       ),
       cancelToken: token,
@@ -277,12 +359,9 @@ class DownloadManager extends ChangeNotifier {
       return;
     }
     if (resp.statusCode != null && resp.statusCode! >= 400) {
-      if (resp.statusCode == 403 && received > 0) {
-        // URL expired mid-resume: restart cleanly from zero.
-        received = 0;
-        file.deleteSync();
-        return _downloadToFile(url, savePath, task, counted: counted);
-      }
+      // 403/410 etc: keep the .part bytes and surface the status code —
+      // the UA ladder (outer) and fresh-manifest retry (_run) decide what
+      // to do next. Never delete partial data here.
       throw DioException.badResponse(
         statusCode: resp.statusCode ?? 500,
         requestOptions: resp.requestOptions,

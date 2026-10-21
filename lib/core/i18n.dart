@@ -111,6 +111,11 @@ class L {
   static String get logCopied => _ar ? 'تم نسخ السجل' : 'Log copied';
   static String get clearLog => _ar ? 'مسح السجل' : 'Clear log';
 
+  // ---- Download errors ----
+  static String get streamRejected => _ar
+      ? 'يوتيوب رفض هذا الرابط (403). اضغط إعادة المحاولة وسيتم تجديد الرابط تلقائياً'
+      : 'YouTube rejected this link (403). Tap retry — the link refreshes automatically';
+
   // ---- Misc ----
   static String get storageDenied => _ar ? 'لم يتم منح إذن التخزين' : 'Storage permission denied';
   static String get qualityNotAvailable => _ar ? 'هذه الجودة غير متاحة حالياً، جرّب جودة أخرى' : 'This quality is unavailable now, try another';
