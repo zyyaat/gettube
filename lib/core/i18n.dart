@@ -52,6 +52,7 @@ class L {
   static String get sectionAudio => _ar ? 'الصوت فقط' : 'Audio only';
   static String get autoMuxNote => _ar ? 'يتم دمج الفيديو والصوت تلقائياً بعد التنزيل' : 'Video and audio are merged automatically after download';
   static String get recommended => _ar ? 'الأفضل' : 'Best';
+  static String get download => _ar ? 'تنزيل' : 'Download';
   static String get downloadStarted => _ar ? 'بدأ التنزيل ✓' : 'Download started ✓';
 
   // ---- Downloads ----

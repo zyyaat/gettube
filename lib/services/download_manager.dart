@@ -269,6 +269,9 @@ class DownloadManager extends ChangeNotifier {
           CrashLog.write('DOWNLOAD 403: ${task.title}', e.stackTrace);
           task.error = L.streamRejected;
         } else {
+          // Keep the raw error in the diagnostics log so mux/FFmpeg/storage
+          // failures can be diagnosed from the in-app error log.
+          CrashLog.write('DOWNLOAD FAILED [${task.option.label}]: $e', e is Error ? e.stackTrace : null);
           task.error = e.toString();
         }
         _set(task, DownloadStatus.failed);

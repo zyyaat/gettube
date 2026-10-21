@@ -1,7 +1,7 @@
 name: gettube
 description: "GetTube — Free & open-source video downloader. Every quality YouTube offers (144p to 8K), zero ads, zero paywalls."
 publish_to: "none"
-version: 1.0.3+4
+version: 1.0.4+5
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
