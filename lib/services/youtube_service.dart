@@ -160,6 +160,15 @@ class YoutubeService {
   /// Resolves the exact streams (by tag) saved on the option at download time.
   static Future<StreamManifest> getManifest(VideoId id) => _yt.videos.streams.getManifest(id);
 
+  /// Resolves the manifest from ONE SPECIFIC YouTube API client.
+  ///
+  /// Pinning the client matters: the download engine pairs each stream URL
+  /// with the User-Agent of the client that minted it. Mismatched fingerprints
+  /// (or PO-Token-gated clients like `android`) get HTTP 403 from Google's
+  /// video servers.
+  static Future<StreamManifest> getManifestWithClient(VideoId id, YoutubeApiClient client) =>
+      _yt.videos.streams.getManifest(id, ytClients: [client]);
+
   static void clearCache() => _optionsCache.clear();
 
   // ---------------- helpers ----------------
