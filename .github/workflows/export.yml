@@ -57,7 +57,7 @@ jobs:
       # Universal APK: arm32 (old phones) + arm64 (modern/64-bit-only phones)
       # + x86_64 (emulators, Chromebooks). Same FIXED release key => installs
       # over any previous GetTube build.
-      - name: Build APK (universal: arm32 + arm64 + x86_64)
+      - name: "Build APK (universal: arm32 + arm64 + x86_64)"
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/android/app/upload-keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
