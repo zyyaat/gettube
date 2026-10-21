@@ -7,6 +7,7 @@ class SavedFile {
     required this.sizeBytes,
     required this.modifiedAt,
     required this.isVideo,
+    this.thumbUrl,
   });
 
   final String name;
@@ -15,4 +16,8 @@ class SavedFile {
   final int sizeBytes;
   final DateTime modifiedAt;
   final bool isVideo;
+
+  /// Source YouTube thumbnail (for the SnapTube-style library view).
+  /// Older registry entries may not have it -> null -> icon fallback.
+  final String? thumbUrl;
 }

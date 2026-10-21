@@ -4,6 +4,16 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Stable release signing (fixes "App not installed" on updates):
+// CI injects KEYSTORE_* env vars from GitHub Secrets — ONE fixed keystore
+// uploaded once — so every build signs with the SAME key and installs over
+// previous versions. Locally (no env vars) we fall back to the debug key
+// so `flutter run --release` keeps working.
+val keystorePath = System.getenv("KEYSTORE_PATH")
+val keystorePass = System.getenv("KEYSTORE_PASSWORD")
+val keystoreAlias = System.getenv("KEY_ALIAS") ?: "gettube"
+val keyPass = System.getenv("KEY_PASSWORD")
+
 android {
     namespace = "com.gettubeapp.gettube"
     compileSdk = flutter.compileSdkVersion
@@ -38,11 +48,24 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystorePath != null && keystorePass != null) {
+                storeFile = file(keystorePath)
+                storePassword = keystorePass
+                keyAlias = keystoreAlias
+                keyPassword = keyPass ?: keystorePass
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keystorePath != null && keystorePass != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

@@ -25,6 +25,7 @@ class StorageService {
     required String mime,
     required String subDir, // StorageDirs.video | StorageDirs.audio
     required bool public,
+    String? thumbUrl,
   }) async {
     if (public) {
       final srcFile = File(tempPath);
@@ -46,6 +47,7 @@ class StorageService {
           sizeBytes: sizeBefore,
           modifiedAt: DateTime.now(),
           isVideo: subDir == StorageDirs.video,
+          thumbUrl: thumbUrl,
         );
         await _register(saved);
         // source already moved by the platform side; best-effort cleanup
@@ -78,6 +80,7 @@ class StorageService {
       sizeBytes: dest.lengthSync(),
       modifiedAt: File(dest.path).lastModifiedSync(),
       isVideo: subDir == StorageDirs.video,
+      thumbUrl: thumbUrl,
     );
     await _register(saved);
     return saved;
@@ -108,6 +111,7 @@ class StorageService {
       'size': f.sizeBytes,
       'date': f.modifiedAt.millisecondsSinceEpoch,
       'video': f.isVideo,
+      'thumb': f.thumbUrl ?? '',
     }));
     // keep the last 300 entries
     final trimmed = list.length > 300 ? list.sublist(list.length - 300) : list;
@@ -138,6 +142,7 @@ class StorageService {
           sizeBytes: size,
           modifiedAt: date,
           isVideo: m['video'] as bool? ?? false,
+          thumbUrl: (m['thumb'] as String?)?.isEmpty == true ? null : m['thumb'] as String?,
         ));
       } catch (_) {
         // skip corrupted entry

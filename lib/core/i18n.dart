@@ -75,6 +75,28 @@ class L {
   static String get fileMissing => _ar ? 'الملف غير موجود' : 'File not found';
   static String get refresh => _ar ? 'تحديث' : 'Refresh';
 
+  // ---- Downloads library (SnapTube-style manager) ----
+  static String get tabAll => _ar ? 'الكل' : 'All';
+  static String get tabVideos => _ar ? 'فيديو' : 'Videos';
+  static String get tabMusic => _ar ? 'صوت' : 'Music';
+  static String get searchDownloads => _ar ? 'ابحث في التنزيلات…' : 'Search downloads…';
+  static String get sortBy => _ar ? 'الترتيب' : 'Sort';
+  static String get sortNewest => _ar ? 'الأحدث أولاً' : 'Newest first';
+  static String get sortLargest => _ar ? 'الأكبر حجماً' : 'Largest first';
+  static String get sortName => _ar ? 'الاسم (أ-ي)' : 'Name (A-Z)';
+  static String get share => _ar ? 'مشاركة' : 'Share';
+  static String get details => _ar ? 'التفاصيل' : 'Details';
+  static String get selectAll => _ar ? 'تحديد الكل' : 'Select all';
+  static String get exitSelection => _ar ? 'إنهاء التحديد' : 'Exit selection';
+  static String get storageUsed => _ar ? 'المساحة المستخدمة' : 'Storage used';
+  static String get filePath => _ar ? 'المسار' : 'Path';
+  static String get fileSize => _ar ? 'الحجم' : 'Size';
+  static String get fileDate => _ar ? 'التاريخ' : 'Date';
+  static String get shareFailed => _ar ? 'تعذر مشاركة الملف' : 'Could not share the file';
+  static String selectedCount(int n) => _ar ? 'تم تحديد $n' : '$n selected';
+  static String deleteConfirm(int n) => _ar ? 'حذف $n ملف نهائياً؟' : 'Delete $n file(s) permanently?';
+  static String deletedCount(int n) => _ar ? 'تم حذف $n ملف' : '$n file(s) deleted';
+
   // ---- Settings ----
   static String get settings => _ar ? 'الإعدادات' : 'Settings';
   static String get appearance => _ar ? 'المظهر' : 'Appearance';

@@ -265,6 +265,7 @@ class DownloadManager extends ChangeNotifier {
         mime: StorageService.mimeFor(finalExt, task.type == DownloadType.video),
         subDir: subDir,
         public: savePublic,
+        thumbUrl: task.thumbnailUrl,
       );
       task.filePath = saved.path;
       task.savedUri = saved.uri;

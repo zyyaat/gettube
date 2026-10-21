@@ -37,8 +37,21 @@ jobs:
       - name: Pub get
         run: flutter pub get
 
-      - name: Build APK (arm32)
+      - name: Decode stable release keystore (GitHub Secrets)
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+
+      - name: Build APK (arm32) — signed with the FIXED release key
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/android/app/upload-keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: flutter build apk --release --target-platform android-arm
+
+      # Same keystore => same SHA256 on every build. This line lets us prove
+      # signature consistency across builds (updates install over old ones).
+      - name: Print signing certificate SHA256
+        run: keytool -list -v -keystore android/app/upload-keystore.jks -storepass "${{ secrets.KEYSTORE_PASSWORD }}" 2>/dev/null | grep SHA256 || true
 
       - name: Prepare output
         run: |
