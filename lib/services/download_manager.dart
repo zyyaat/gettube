@@ -84,6 +84,7 @@ class DownloadManager extends ChangeNotifier {
       option: option,
       createdAt: DateTime.now(),
     )..total = option.sizeBytes;
+    task.duration = duration;
     task.destinationLabel = _destinationLabel(type);
 
     tasks.insert(0, task);
@@ -171,6 +172,10 @@ class DownloadManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Re-evaluates the queue right now (called when a relevant setting
+  /// changes, e.g. the user enables mobile data).
+  void refresh() => _pump();
+
   void _pump() {
     if (_pumping) {
       _pumpQueued = true; // a pump is already in flight — re-run it once more
@@ -187,24 +192,12 @@ class DownloadManager extends ChangeNotifier {
     try {
       do {
         _pumpQueued = false;
-        // Refresh the metered (mobile data) state before assigning slots.
-        _metered = await StorageService.isMetered();
-        int free = maxConcurrent - activeCount;
-        for (final t in List<DownloadTask>.from(tasks)) {
-          if (free <= 0) break;
-          // Released from the Wi-Fi gate when data is allowed again?
-          if (t.status == DownloadStatus.waitingForWifi) {
-            if (mobileDataAllowed || !_metered) _set(t, DownloadStatus.queued);
-            continue;
-          }
-          if (t.status != DownloadStatus.queued) continue;
-          // Mobile data disabled + metered network -> hold for Wi-Fi.
-          if (!mobileDataAllowed && _metered) {
-            _set(t, DownloadStatus.waitingForWifi);
-            continue;
-          }
-          free--;
-          unawaited(_run(t));
+        try {
+          await _pumpPass();
+        } catch (e, st) {
+          // A dead pump pass must never strand tasks — log it; the network
+          // timer below re-runs the pump as a self-healing safety net.
+          CrashLog.write('PUMP failed: $e', st);
         }
         _syncWakelock();
         _syncNetTimer();
@@ -214,10 +207,42 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// While any task waits for Wi-Fi, poll the network so it starts
-  /// automatically the moment Wi-Fi is back.
+  Future<void> _pumpPass() async {
+    // Refresh the metered (mobile data) state before assigning slots.
+    // If the platform check fails, keep the last known state instead of
+    // killing the whole pump (that used to strand tasks in queued forever).
+    try {
+      _metered = await StorageService.isMetered();
+    } catch (e) {
+      CrashLog.write('network check failed: $e');
+    }
+    int free = maxConcurrent - activeCount;
+    for (final t in List<DownloadTask>.from(tasks)) {
+      if (free <= 0) break;
+      // Released from the Wi-Fi gate? Do NOT continue — fall through so
+      // it STARTS in this very pass (the old code broke out here and
+      // nothing re-triggered the pump afterwards, so the task sat in
+      // queued forever).
+      if (t.status == DownloadStatus.waitingForWifi) {
+        if (!(mobileDataAllowed || !_metered)) continue;
+        _set(t, DownloadStatus.queued);
+      }
+      if (t.status != DownloadStatus.queued) continue;
+      // Mobile data disabled + metered network -> hold for Wi-Fi.
+      if (!mobileDataAllowed && _metered) {
+        _set(t, DownloadStatus.waitingForWifi);
+        continue;
+      }
+      free--;
+      unawaited(_run(t));
+    }
+  }
+
+  /// While any task waits for Wi-Fi — or sits queued (safety net) — poll
+  /// the network/settings state so work resumes automatically the moment
+  /// Wi-Fi is back or mobile data is allowed.
   void _syncNetTimer() {
-    final need = tasks.any((t) => t.status == DownloadStatus.waitingForWifi);
+    final need = tasks.any((t) => t.status == DownloadStatus.waitingForWifi || t.status == DownloadStatus.queued);
     if (need && _netTimer == null) {
       _netTimer = Timer.periodic(const Duration(seconds: 12), (_) => _pump());
     } else if (!need && _netTimer != null) {
@@ -297,37 +322,69 @@ class DownloadManager extends ChangeNotifier {
             continue; // fresh client, fresh URLs, same .part files
           }
           rethrow;
+        } on TimeoutException {
+          if (!isLastClient && !_stopIntent.containsKey(task.id)) {
+            CrashLog.write('manifest timeout from client ${_clientName(client)} — switching client');
+            continue;
+          }
+          rethrow;
         }
       }
       // Every client exhausted without a usable stream for this tag.
       if (!resolved) throw Exception(L.qualityNotAvailable);
 
-      // 2) mux / convert
+      // 2) mux / convert — with LIVE progress (a 4K merge used to look
+      // frozen because nothing on the card moved during this phase).
       String outPath = mainPath;
       String finalExt = task.option.ext;
       if (audioPath != null) {
         _set(task, DownloadStatus.processing);
+        task.processProgress = 0;
         outPath = '${tmpDir.path}/${task.id}.out.${task.option.ext}';
         try {
-          await MediaService.muxVideoAudio(mainPath, audioPath, outPath);
+          await MediaService.muxVideoAudio(
+            mainPath, audioPath, outPath,
+            duration: task.duration,
+            onProgress: (p) {
+              task.processProgress = p;
+              notifyListeners();
+            },
+          );
         } catch (_) {
           // Never lose a high-quality download: MKV accepts every codec
           // combination YouTube serves (VP9/AV1 + Opus included), so retry
           // the lossless mux into an .mkv before giving up.
           outPath = '${tmpDir.path}/${task.id}.out.mkv';
-          await MediaService.muxVideoAudio(mainPath, audioPath, outPath);
+          await MediaService.muxVideoAudio(
+            mainPath, audioPath, outPath,
+            duration: task.duration,
+            onProgress: (p) {
+              task.processProgress = p;
+              notifyListeners();
+            },
+          );
           finalExt = 'mkv';
         }
         _tryDelete(mainPath);
         _tryDelete(audioPath);
       } else if (task.option.mp3) {
         _set(task, DownloadStatus.processing);
+        task.processProgress = 0;
         outPath = '${tmpDir.path}/${task.id}.out.mp3';
-        await MediaService.toMp3(mainPath, outPath);
+        await MediaService.toMp3(
+          mainPath, outPath,
+          duration: task.duration,
+          onProgress: (p) {
+            task.processProgress = p;
+            notifyListeners();
+          },
+        );
         _tryDelete(mainPath);
       }
 
-      // 3) publish to destination
+      // 3) publish to destination — copying a 2-4GB 4K file takes a while,
+      // so give it its own visible state instead of a frozen "processing".
+      _set(task, DownloadStatus.saving);
       _stopIntent.remove(task.id);
       final subDir =
           task.type == DownloadType.video ? StorageDirs.video : StorageDirs.audio;
@@ -405,7 +462,9 @@ class DownloadManager extends ChangeNotifier {
   /// given client. Returns null when this client does not offer the tag
   /// (the ladder then moves to the next client).
   Future<StreamInfo?> _resolveStream(DownloadTask task, int tag, YoutubeApiClient client) async {
-    final manifest = await YoutubeService.getManifestWithClient(VideoId(task.videoId), client);
+    // Timeout: a hung manifest request used to freeze the task in
+    // "preparing" forever — now it retries with the next client.
+    final manifest = await YoutubeService.getManifestWithClient(VideoId(task.videoId), client).timeout(const Duration(seconds: 30));
     for (final s in manifest.streams) {
       if (s.tag == tag) return s;
     }

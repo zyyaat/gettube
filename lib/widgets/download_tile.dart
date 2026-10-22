@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../core/formatters.dart';
 import '../core/i18n.dart';
 import '../models/download_task.dart';
 import '../services/download_manager.dart';
+import '../state/settings_controller.dart';
 
 /// A row for an active/finished/failed download task with live progress.
 class DownloadTile extends StatelessWidget {
@@ -104,6 +106,49 @@ class DownloadTile extends StatelessWidget {
                     ),
                 ],
               ),
+            ] else if (task.status == DownloadStatus.processing || task.status == DownloadStatus.saving) ...[
+              // Merging/converting and the final copy used to look frozen —
+              // always show a live bar in these phases.
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(99),
+                child: LinearProgressIndicator(
+                  value: task.status == DownloadStatus.processing && task.processProgress > 0
+                      ? task.processProgress
+                      : null,
+                  minHeight: 6,
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                task.status == DownloadStatus.saving
+                    ? L.saving
+                    : task.processProgress > 0
+                        ? '${(task.processProgress * 100).round()}%'
+                        : L.processing,
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+            if (task.status == DownloadStatus.waitingForWifi) ...[
+              const SizedBox(height: 8),
+              Text(
+                L.wifiGateHint,
+                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 6),
+              FilledButton.tonalIcon(
+                onPressed: () async {
+                  await context.read<SettingsController>().setMobileDataAllowed(true);
+                  DownloadManager.instance.refresh();
+                },
+                icon: const Icon(Icons.network_cell_rounded, size: 18),
+                label: Text(L.allowMobileData),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+              ),
             ],
             if (task.status == DownloadStatus.failed && task.error != null)
               Padding(
@@ -130,7 +175,11 @@ class DownloadTile extends StatelessWidget {
       case DownloadStatus.downloading:
         return L.downloading;
       case DownloadStatus.processing:
-        return L.processing;
+        return task.processProgress > 0
+            ? '${L.processing} ${(task.processProgress * 100).round()}%'
+            : L.processing;
+      case DownloadStatus.saving:
+        return L.saving;
       case DownloadStatus.waitingForWifi:
         return L.waitingForWifi;
       case DownloadStatus.paused:
@@ -165,6 +214,7 @@ class DownloadTile extends StatelessWidget {
       case DownloadStatus.fetching:
       case DownloadStatus.downloading:
       case DownloadStatus.processing:
+      case DownloadStatus.saving:
         return [
           IconButton(
             tooltip: L.pause,
@@ -192,6 +242,11 @@ class DownloadTile extends StatelessWidget {
         ];
       case DownloadStatus.waitingForWifi:
         return [
+          IconButton(
+            tooltip: L.pause,
+            icon: const Icon(Icons.pause_circle_outline),
+            onPressed: () => DownloadManager.instance.pause(task),
+          ),
           IconButton(
             tooltip: L.cancel,
             icon: const Icon(Icons.close_rounded),

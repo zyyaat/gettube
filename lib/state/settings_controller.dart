@@ -122,6 +122,9 @@ class SettingsController extends ChangeNotifier {
       ..sdVolumeId = sdVolumeId
       ..customTreeUri = customTreeUri
       ..customFolderLabel = customFolderLabel
-      ..mobileDataAllowed = mobileDataAllowed;
+      ..mobileDataAllowed = mobileDataAllowed
+      // Re-evaluate the queue NOW: e.g. enabling mobile data must release
+      // waiting tasks immediately, not after the next poll tick.
+      ..refresh();
   }
 }

@@ -2,7 +2,7 @@ import 'package:dio/dio.dart';
 
 import 'quality_option.dart';
 
-enum DownloadStatus { queued, fetching, downloading, processing, paused, waitingForWifi, completed, failed, canceled }
+enum DownloadStatus { queued, fetching, downloading, processing, saving, paused, waitingForWifi, completed, failed, canceled }
 
 enum DownloadType { video, audio }
 
@@ -33,6 +33,13 @@ class DownloadTask {
   int received = 0;
   int total = 0;
   double speedBps = 0;
+
+  /// 0..1 while the final file is being prepared (merging/converting).
+  /// 0 = not started or indeterminate.
+  double processProgress = 0;
+
+  /// Video duration — used to turn FFmpeg statistics into a real %.
+  Duration? duration;
   String? filePath; // final saved path/uri
   String? savedUri; // MediaStore content uri when public on Android 10+
   String? error;
@@ -53,5 +60,6 @@ class DownloadTask {
       status == DownloadStatus.fetching ||
       status == DownloadStatus.downloading ||
       status == DownloadStatus.processing ||
+      status == DownloadStatus.saving ||
       status == DownloadStatus.waitingForWifi;
 }

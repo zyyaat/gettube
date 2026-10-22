@@ -67,7 +67,12 @@ class L {
   static String get preparing => _ar ? 'تحضير…' : 'Preparing…';
   static String get downloading => _ar ? 'جاري التنزيل' : 'Downloading';
   static String get processing => _ar ? 'جاري تجهيز الملف…' : 'Finalizing…';
+  static String get saving => _ar ? 'جاري حفظ الملف…' : 'Saving file…';
   static String get waitingForWifi => _ar ? 'بانتظار Wi-Fi' : 'Waiting for Wi-Fi';
+  static String get wifiGateHint => _ar
+      ? 'التنزيل عبر بيانات الهاتف مقفول — شغّل Wi-Fi أو اسمح بالتنزيل بالبيانات'
+      : 'Mobile data downloads are off — connect to Wi-Fi or allow mobile data';
+  static String get allowMobileData => _ar ? 'السماح بالتنزيل بالبيانات' : 'Allow mobile data';
   static String get paused => _ar ? 'متوقف مؤقتاً' : 'Paused';
   static String get completed => _ar ? 'اكتمل' : 'Completed';
   static String get failed => _ar ? 'فشل' : 'Failed';

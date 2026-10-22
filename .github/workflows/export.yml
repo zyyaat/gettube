@@ -58,6 +58,7 @@ jobs:
 
       - name: Prepare output
         run: |
+          mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk "dist/GetTube-universal-r${{ github.run_number }}.apk"
           ls -la dist/
 
