@@ -211,7 +211,7 @@ class MainActivity : FlutterActivity() {
             "uri" to created.uri.toString(),
             "path" to "",
             "name" to finalName,
-            "folder" to treeDisplayName(treeUri)
+            "folder" to treeDisplayName(Uri.parse(treeUri))
         )
     }
 
