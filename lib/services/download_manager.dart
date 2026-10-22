@@ -20,6 +20,10 @@ import 'notification_service.dart';
 import 'storage_service.dart';
 import 'youtube_service.dart';
 
+/// The server stopped honoring Range requests mid-flight — segmented
+/// splitting is impossible, the caller falls back to one stream.
+class _RangeIgnored {}
+
 /// The download queue engine.
 ///
 /// Features:
@@ -72,6 +76,7 @@ class DownloadManager extends ChangeNotifier {
     required String channel,
     required QualityOption option,
     required Duration? duration,
+    StreamManifest? presetManifest,
   }) async {
     final type = option.kind == QualityKind.audioOnly ? DownloadType.audio : DownloadType.video;
     final task = DownloadTask(
@@ -85,13 +90,35 @@ class DownloadManager extends ChangeNotifier {
       createdAt: DateTime.now(),
     )..total = option.sizeBytes;
     task.duration = duration;
+    // SnapTube-style instant start: the quality sheet already fetched this
+    // manifest seconds ago — hand its stream URLs straight to the engine so
+    // the first HTTP GET fires immediately (no re-resolution round-trips).
+    if (presetManifest != null) {
+      for (final s in presetManifest.streams) {
+        if (s.tag == option.videoTag) {
+          task.presetMainUrl = s.url.toString();
+          break;
+        }
+      }
+      if (option.audioTag != null) {
+        for (final s in presetManifest.streams) {
+          if (s.tag == option.audioTag) {
+            task.presetAudioUrl = s.url.toString();
+            task.presetAudioExt = s.container.name == 'mp4' ? 'm4a' : 'webm';
+            break;
+          }
+        }
+      }
+    }
     task.destinationLabel = _destinationLabel(type);
 
     tasks.insert(0, task);
     notifyListeners();
-    await NotificationService.ensurePermission();
-    await _ensureStoragePermission();
+    // START THE QUEUE NOW — permissions must never gate the download (a hung
+    // permission dialog used to strand tasks in "waiting" forever).
     _pump();
+    unawaited(NotificationService.ensurePermission());
+    unawaited(_ensureStoragePermission());
   }
 
   Future<void> _ensureStoragePermission() async {
@@ -279,6 +306,44 @@ class DownloadManager extends ChangeNotifier {
       late String mainPath;
       String? audioPath;
       bool resolved = false;
+
+      // FAST PATH — SnapTube-style instant start: the quality sheet already
+      // fetched this manifest seconds ago, so download those URLs RIGHT NOW
+      // with zero re-resolution. YouTube stream URLs stay valid for hours.
+      // On 403/401/410 (or a stall) we fall through to the client ladder
+      // below — .part/.seg bytes are kept and resumed, nothing is lost.
+      final audioReady = task.option.audioTag == null || task.presetAudioUrl != null;
+      if (task.presetMainUrl != null && audioReady) {
+        try {
+          task.total = task.option.sizeBytes;
+          task.received = 0;
+          _set(task, DownloadStatus.downloading);
+          mainPath = '${tmpDir.path}/${task.id}.main.${task.option.srcExt}';
+          await _downloadToFile(task.presetMainUrl!, mainPath, task, _uaForClient(YoutubeApiClient.androidSdkless));
+          audioPath = null;
+          if (task.option.audioTag != null && task.presetAudioUrl != null) {
+            audioPath = '${tmpDir.path}/${task.id}.audio.${task.presetAudioExt ?? 'm4a'}';
+            await _downloadToFile(
+              task.presetAudioUrl!,
+              audioPath,
+              task,
+              _uaForClient(YoutubeApiClient.androidSdkless),
+              counted: false,
+            );
+          }
+          resolved = true;
+        } on DioException catch (e) {
+          final code = e.response?.statusCode;
+          final stalled = e.type == DioExceptionType.cancel && !_stopIntent.containsKey(task.id);
+          if (!_stopIntent.containsKey(task.id) && (stalled || code == 403 || code == 401 || code == 410 || code == 404)) {
+            CrashLog.write('FAST-START $code — switching to client ladder (tag ${task.option.videoTag})');
+            audioPath = null;
+          } else {
+            rethrow;
+          }
+        }
+      }
+
       for (int pass = 0; pass < _clientLadder.length; pass++) {
         final client = _clientLadder[pass];
         final isLastClient = pass == _clientLadder.length - 1;
@@ -314,10 +379,13 @@ class DownloadManager extends ChangeNotifier {
           break; // this client worked — done resolving/downloading
         } on DioException catch (e) {
           final code = e.response?.statusCode;
-          final retriable = code == 403 || code == 401 || code == 410 || code == 404;
+          // A stall watchdog cancel (no user intent) is a dead socket, not
+          // a failure — retry the same tag with the next client, .part kept.
+          final stalled = e.type == DioExceptionType.cancel && !_stopIntent.containsKey(task.id);
+          final retriable = stalled || code == 403 || code == 401 || code == 410 || code == 404;
           if (!isLastClient && retriable && !_stopIntent.containsKey(task.id)) {
             CrashLog.write(
-                'DL $code from client ${_clientName(client)} (tag ${task.option.videoTag}) — switching client');
+                'DL ${stalled ? 'STALL' : code} from client ${_clientName(client)} (tag ${task.option.videoTag}) — switching client');
             await Future<void>.delayed(const Duration(milliseconds: 800));
             continue; // fresh client, fresh URLs, same .part files
           }
@@ -553,6 +621,60 @@ class DownloadManager extends ChangeNotifier {
     String ua, {
     bool counted = true,
   }) async {
+    // Probe the real size + Range support with a 1-byte request. The probe
+    // token is cancelled right after the headers are read — on a non-Range
+    // server the 200 body would otherwise be the WHOLE file.
+    int total = 0;
+    bool ranged = false;
+    final probeToken = CancelToken();
+    try {
+      final probe = await _dio.get<ResponseBody>(
+        url,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {'range': 'bytes=0-0', 'user-agent': ua},
+          validateStatus: (c) => c != null && c < 500,
+        ),
+        cancelToken: probeToken,
+      );
+      final cr = probe.headers.value('content-range');
+      if (probe.statusCode == 206 && cr != null) {
+        final m = RegExp(r'/(\d+)\s*$').firstMatch(cr);
+        if (m != null) {
+          total = int.parse(m.group(1)!);
+          ranged = true;
+        }
+      }
+    } finally {
+      if (!probeToken.isCancelled) probeToken.cancel('probe-done');
+    }
+
+    if (ranged && total > _minSegmentedBytes) {
+      // Multi-connection download (NewPipe/IDM/SnapTube style): the file is
+      // split into N byte ranges fetched in parallel — bypasses single-TCP
+      // throttling and saturates the link. Any segment failure self-heals.
+      try {
+        await _downloadSegmented(url, savePath, task, ua, total, counted: counted);
+        return;
+      } on _RangeIgnored {
+        // Server flipped to full-body responses — fall back to one stream.
+        _deleteSegs(savePath);
+      }
+    }
+    await _downloadSingleStream(url, savePath, task, ua, counted: counted);
+  }
+
+  /// Classic single-connection resumable download (kept for small files,
+  /// non-Range servers, and as the segmented fallback). Adds a stall
+  /// watchdog: no bytes for 20s cancels the request so the outer ladders
+  /// can retry — the task can never hang silently on a dead socket.
+  Future<void> _downloadSingleStream(
+    String url,
+    String savePath,
+    DownloadTask task,
+    String ua, {
+    bool counted = true,
+  }) async {
     final token = CancelToken();
     task.cancelToken = token;
 
@@ -591,12 +713,22 @@ class DownloadManager extends ChangeNotifier {
     final sw = Stopwatch()..start();
     int lastBytes = received;
     double ema = 0;
+    Timer? stall;
+
+    void resetStall() {
+      stall?.cancel();
+      stall = Timer(const Duration(seconds: 20), () {
+        if (!_stopIntent.containsKey(task.id)) token.cancel('stall');
+      });
+    }
 
     try {
+      resetStall();
       await for (final chunk in resp.data!.stream) {
         sink.add(chunk);
         received += chunk.length;
         if (counted) task.received = received;
+        resetStall();
 
         if (sw.elapsedMilliseconds >= 500) {
           final inst = (received - lastBytes) * 1000 / sw.elapsedMilliseconds;
@@ -617,6 +749,190 @@ class DownloadManager extends ChangeNotifier {
         await sink.close();
       } catch (_) {}
       rethrow;
+    } finally {
+      stall?.cancel();
+    }
+  }
+
+  static const int _segments = 4;
+  static const int _minSegmentedBytes = 8 * 1024 * 1024;
+
+  /// Multi-connection download: the file is split into [_segments] byte
+  /// ranges, each fetched in parallel into its own `.segN` file (so resume
+  /// needs no sidecar — the segment file length IS the progress marker).
+  /// Incomplete rounds self-heal: counts are re-read from disk and only the
+  /// missing ranges are re-requested, with the task's shared cancel token
+  /// replaced each round so pause/cancel keeps working. Finally the segments
+  /// are concatenated into the real `.part` file.
+  Future<void> _downloadSegmented(
+    String url,
+    String savePath,
+    DownloadTask task,
+    String ua,
+    int total, {
+    required bool counted,
+  }) async {
+    String segPath(int i) => '$savePath.seg$i';
+    final segLen = (total + _segments - 1) ~/ _segments;
+    int rangeLen(int i) => (i == _segments - 1) ? total - segLen * (_segments - 1) : segLen;
+
+    List<int> counts() => List.generate(_segments, (i) {
+          final f = File(segPath(i));
+          if (!f.existsSync()) return 0;
+          final len = f.lengthSync();
+          // Longer than its range = a server ignored Range (sent a full
+          // body). Signal the caller to fall back to a single stream.
+          if (len > rangeLen(i)) throw _RangeIgnored();
+          return len;
+        });
+
+    List<int> c = counts();
+    int receivedNow() => c.fold(0, (a, b) => a + b);
+    if (counted) {
+      task.received = receivedNow();
+      notifyListeners();
+    }
+
+    final sw = Stopwatch()..start();
+    int lastSample = receivedNow();
+    double ema = 0;
+    int round = 0;
+
+    while (true) {
+      final roundToken = CancelToken();
+      task.cancelToken = roundToken;
+      final futures = <Future<void>>[];
+      for (int i = 0; i < _segments; i++) {
+        final start = i * segLen;
+        final end = (i == _segments - 1) ? total - 1 : (i + 1) * segLen - 1;
+        final from = start + c[i];
+        if (from > end) continue;
+        futures.add(_downloadRange(
+          url, segPath(i), from, end, task, ua, roundToken,
+          onSegBytes: (n) {
+            c[i] = n;
+            if (!counted) return;
+            task.received = receivedNow();
+            if (sw.elapsedMilliseconds >= 500) {
+              final nowR = task.received;
+              final inst = (nowR - lastSample) * 1000 / sw.elapsedMilliseconds;
+              ema = ema == 0 ? inst : ema * 0.7 + inst * 0.3;
+              task.speedBps = ema;
+              lastSample = nowR;
+              sw.reset();
+              notifyListeners();
+            }
+          },
+        ));
+      }
+      if (futures.isEmpty) break;
+      try {
+        await Future.wait(futures);
+      } catch (e) {
+        // A stall cancels the whole round — refresh counts from disk and
+        // re-issue only the missing ranges. Real errors propagate after a
+        // few rounds; user pause/cancel always propagates immediately.
+        if (_stopIntent.containsKey(task.id)) rethrow;
+        if (e is _RangeIgnored) rethrow;
+        round++;
+        if (round >= 6) rethrow;
+        c = counts();
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        continue;
+      }
+      // Requests "succeeded" — verify the segments REALLY reached their
+      // range ends on disk (a stray 416 must never truncate the file).
+      c = counts();
+      final allDone = List.generate(_segments, (i) => c[i] >= rangeLen(i)).every((v) => v);
+      if (allDone) break;
+      round++;
+      if (round >= 6) {
+        throw Exception('segmented download stalled after $round rounds');
+      }
+    }
+
+    if (counted) {
+      task.received = task.total;
+      task.speedBps = 0;
+      notifyListeners();
+    }
+
+    // Concatenate the segments into the real file, then drop them.
+    final out = File(savePath).openSync(mode: FileMode.write);
+    try {
+      for (int i = 0; i < _segments; i++) {
+        await for (final chunk in File(segPath(i)).openRead()) {
+          out.writeFromSync(chunk);
+        }
+      }
+      out.flushSync();
+    } finally {
+      out.closeSync();
+    }
+    _deleteSegs(savePath);
+  }
+
+  /// One parallel worker: downloads the fixed byte range [from]..[end] of
+  /// [url] appending into [path] (its length = bytes already fetched).
+  Future<void> _downloadRange(
+    String url,
+    String path,
+    int from,
+    int end,
+    DownloadTask task,
+    String ua,
+    CancelToken token, {
+    required void Function(int segReceived) onSegBytes,
+  }) async {
+    final file = File(path);
+    final raf = file.openSync(mode: FileMode.append);
+    int received = from; // absolute stream position
+    Timer? stall;
+
+    void resetStall() {
+      stall?.cancel();
+      stall = Timer(const Duration(seconds: 20), () {
+        if (!_stopIntent.containsKey(task.id)) token.cancel('stall');
+      });
+    }
+
+    try {
+      final resp = await _dio.get<ResponseBody>(
+        url,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {'range': 'bytes=$from-$end', 'user-agent': ua},
+          validateStatus: (c) => c != null && c < 500,
+        ),
+        cancelToken: token,
+      );
+      if (resp.statusCode == 416) return; // range already complete
+      if (resp.statusCode != 206) {
+        // 200 = server ignored the Range header → cannot split safely.
+        throw _RangeIgnored();
+      }
+      resetStall();
+      await for (final chunk in resp.data!.stream) {
+        raf.writeFromSync(chunk);
+        received += chunk.length;
+        onSegBytes(received - from); // bytes of THIS segment
+        resetStall();
+      }
+      raf.flushSync();
+    } finally {
+      stall?.cancel();
+      try {
+        raf.closeSync();
+      } catch (_) {}
+    }
+  }
+
+  void _deleteSegs(String savePath) {
+    for (int i = 0; i < _segments; i++) {
+      try {
+        final f = File('$savePath.seg$i');
+        if (f.existsSync()) f.deleteSync();
+      } catch (_) {}
     }
   }
 

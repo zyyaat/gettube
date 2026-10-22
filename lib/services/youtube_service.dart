@@ -16,6 +16,13 @@ class YoutubeService {
   /// Cache of quality options per video (manifest fetch is expensive).
   static final Map<String, List<QualityOption>> _optionsCache = {};
 
+  /// Cache of the LAST manifest per video — passed to the download engine so
+  /// the HTTP GET starts IMMEDIATELY on quality pick (no re-resolution).
+  /// YouTube stream URLs stay valid for hours; on 403 the engine re-mints.
+  static final Map<String, StreamManifest> _manifestCache = {};
+
+  static StreamManifest? cachedManifest(String videoId) => _manifestCache[videoId];
+
   // ---------------- Search ----------------
 
   /// Returns the first search page. Keep the returned [VideoSearchList]
@@ -154,6 +161,7 @@ class YoutubeService {
     }
 
     _optionsCache[video.id.value] = options;
+    _manifestCache[video.id.value] = manifest;
     return options;
   }
 
@@ -169,7 +177,10 @@ class YoutubeService {
   static Future<StreamManifest> getManifestWithClient(VideoId id, YoutubeApiClient client) =>
       _yt.videos.streams.getManifest(id, ytClients: [client]);
 
-  static void clearCache() => _optionsCache.clear();
+  static void clearCache() {
+    _optionsCache.clear();
+    _manifestCache.clear();
+  }
 
   // ---------------- helpers ----------------
 

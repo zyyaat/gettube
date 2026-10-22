@@ -5,6 +5,7 @@ import '../core/formatters.dart';
 import '../core/i18n.dart';
 import '../models/quality_option.dart';
 import '../services/download_manager.dart';
+import '../services/youtube_service.dart';
 
 /// Bottom sheet listing EVERY quality YouTube offers for the video:
 ///  • muxed (instant) rows
@@ -49,6 +50,9 @@ class _QualitySheetState extends State<QualitySheet> {
       channel: widget.video.author,
       option: option,
       duration: widget.video.duration,
+      // The manifest for this video was fetched seconds ago to list the
+      // qualities — hand it over so the HTTP GET starts immediately.
+      presetManifest: YoutubeService.cachedManifest(widget.video.id.value),
     );
     Navigator.of(context).pop();
     messenger.showSnackBar(

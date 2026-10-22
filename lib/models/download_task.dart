@@ -49,6 +49,13 @@ class DownloadTask {
 
   CancelToken? cancelToken;
 
+  /// Pre-resolved stream URLs taken from the manifest that was ALREADY
+  /// fetched for the quality sheet — the download starts on them instantly
+  /// (SnapTube-style). On 403/410 the engine re-mints via the client ladder.
+  String? presetMainUrl;
+  String? presetAudioUrl;
+  String? presetAudioExt;
+
   double get progress {
     if (total <= 0) return 0;
     final p = received / total;
