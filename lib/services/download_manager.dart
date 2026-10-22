@@ -13,6 +13,7 @@ import '../core/formatters.dart';
 import '../core/i18n.dart';
 import '../models/download_task.dart';
 import '../models/quality_option.dart';
+import '../models/saved_file.dart';
 import 'crash_log.dart';
 import 'media_service.dart';
 import 'notification_service.dart';
@@ -22,12 +23,13 @@ import 'youtube_service.dart';
 /// The download queue engine.
 ///
 /// Features:
-///  • parallel downloads (configurable concurrency)
+///  • parallel downloads (user-configurable 1..10)
 ///  • pause / resume via HTTP Range requests (.part files kept on disk)
 ///  • automatic retry-safe temp files, cancel with cleanup
-///  • auto-mux of video+audio (DASH) through FFmpeg for HD/4K/8K
+///  • automatic final-file preparation for HD/4K/8K quality
 ///  • MP3 conversion for audio tasks
-///  • publishes to public Downloads (MediaStore) or app directory
+///  • waits for Wi-Fi when mobile data is disabled (user setting)
+///  • publishes to the user-selected save location
 class DownloadManager extends ChangeNotifier {
   DownloadManager._internal();
   static final DownloadManager instance = DownloadManager._internal();
@@ -35,7 +37,13 @@ class DownloadManager extends ChangeNotifier {
   final List<DownloadTask> tasks = []; // newest first
 
   int maxConcurrent = 2;
-  bool savePublic = true;
+
+  /// Save location: 'default' | 'sdcard' | 'custom' | 'app'.
+  String saveLocation = 'default';
+  String? sdVolumeId;
+  String? customTreeUri;
+  String customFolderLabel = '';
+  bool mobileDataAllowed = true;
 
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -46,7 +54,10 @@ class DownloadManager extends ChangeNotifier {
   final Map<String, String> _stopIntent = {}; // taskId -> 'pause' | 'cancel'
 
   bool _wakelockHeld = false;
+  Timer? _netTimer;
+  bool _metered = false;
 
+  /// Slots actually consumed by running work (waiting tasks don't count).
   int get activeCount =>
       tasks.where((t) => t.status == DownloadStatus.queued || t.status == DownloadStatus.fetching || t.status == DownloadStatus.downloading || t.status == DownloadStatus.processing).length;
 
@@ -73,6 +84,7 @@ class DownloadManager extends ChangeNotifier {
       option: option,
       createdAt: DateTime.now(),
     )..total = option.sizeBytes;
+    task.destinationLabel = _destinationLabel(type);
 
     tasks.insert(0, task);
     notifyListeners();
@@ -84,7 +96,7 @@ class DownloadManager extends ChangeNotifier {
   Future<void> _ensureStoragePermission() async {
     try {
       // Only needed for direct public writes on Android 9-.
-      if (Platform.isAndroid && savePublic) {
+      if (Platform.isAndroid && saveLocation != 'app') {
         final v = int.tryParse(Platform.version.split('.').first) ?? 0;
         if (v <= 28 && await Permission.storage.isDenied) {
           await Permission.storage.request();
@@ -93,9 +105,26 @@ class DownloadManager extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Human-friendly destination folder shown on download cards.
+  String _destinationLabel(DownloadType type) {
+    final leaf = type == DownloadType.video ? StorageDirs.video : StorageDirs.audio;
+    switch (saveLocation) {
+      case 'custom':
+        if (customTreeUri != null && customFolderLabel.isNotEmpty) return customFolderLabel;
+        return 'GetTube/$leaf';
+      case 'app':
+        return 'GetTube/$leaf';
+      case 'sdcard':
+        return 'SD/Download/GetTube/$leaf';
+      default:
+        return 'Download/GetTube/$leaf';
+    }
+  }
+
   void pause(DownloadTask t) {
-    if (t.status == DownloadStatus.queued) {
+    if (t.status == DownloadStatus.queued || t.status == DownloadStatus.waitingForWifi) {
       _set(t, DownloadStatus.paused);
+      _syncWakelock();
       return;
     }
     if (t.isActive) {
@@ -105,7 +134,7 @@ class DownloadManager extends ChangeNotifier {
   }
 
   void resume(DownloadTask t) {
-    if (t.status == DownloadStatus.paused || t.status == DownloadStatus.failed || t.status == DownloadStatus.canceled) {
+    if (t.status == DownloadStatus.paused || t.status == DownloadStatus.failed || t.status == DownloadStatus.canceled || t.status == DownloadStatus.waitingForWifi) {
       t.error = null;
       _set(t, DownloadStatus.queued);
       _pump();
@@ -116,9 +145,10 @@ class DownloadManager extends ChangeNotifier {
   void retry(DownloadTask t) => resume(t);
 
   void cancel(DownloadTask t) {
-    if (t.status == DownloadStatus.queued) {
+    if (t.status == DownloadStatus.queued || t.status == DownloadStatus.waitingForWifi) {
       _cleanupParts(t);
       _set(t, DownloadStatus.canceled);
+      _syncNetTimer();
       return;
     }
     if (t.isActive) {
@@ -142,14 +172,58 @@ class DownloadManager extends ChangeNotifier {
   }
 
   void _pump() {
-    int free = maxConcurrent - activeCount;
-    for (final t in List<DownloadTask>.from(tasks)) {
-      if (free <= 0) break;
-      if (t.status != DownloadStatus.queued) continue;
-      free--;
-      unawaited(_run(t));
+    if (_pumping) {
+      _pumpQueued = true; // a pump is already in flight — re-run it once more
+      return;
     }
-    _syncWakelock();
+    unawaited(_pumpAsync());
+  }
+
+  bool _pumping = false;
+  bool _pumpQueued = false;
+
+  Future<void> _pumpAsync() async {
+    _pumping = true;
+    try {
+      do {
+        _pumpQueued = false;
+        // Refresh the metered (mobile data) state before assigning slots.
+        _metered = await StorageService.isMetered();
+        int free = maxConcurrent - activeCount;
+        for (final t in List<DownloadTask>.from(tasks)) {
+          if (free <= 0) break;
+          // Released from the Wi-Fi gate when data is allowed again?
+          if (t.status == DownloadStatus.waitingForWifi) {
+            if (mobileDataAllowed || !_metered) _set(t, DownloadStatus.queued);
+            continue;
+          }
+          if (t.status != DownloadStatus.queued) continue;
+          // Mobile data disabled + metered network -> hold for Wi-Fi.
+          if (!mobileDataAllowed && _metered) {
+            _set(t, DownloadStatus.waitingForWifi);
+            continue;
+          }
+          free--;
+          unawaited(_run(t));
+        }
+        _syncWakelock();
+        _syncNetTimer();
+      } while (_pumpQueued);
+    } finally {
+      _pumping = false;
+    }
+  }
+
+  /// While any task waits for Wi-Fi, poll the network so it starts
+  /// automatically the moment Wi-Fi is back.
+  void _syncNetTimer() {
+    final need = tasks.any((t) => t.status == DownloadStatus.waitingForWifi);
+    if (need && _netTimer == null) {
+      _netTimer = Timer.periodic(const Duration(seconds: 12), (_) => _pump());
+    } else if (!need && _netTimer != null) {
+      _netTimer!.cancel();
+      _netTimer = null;
+    }
   }
 
   // ---------------- worker ----------------
@@ -259,16 +333,43 @@ class DownloadManager extends ChangeNotifier {
           task.type == DownloadType.video ? StorageDirs.video : StorageDirs.audio;
       final displayName =
           '${sanitizeFileName(task.title)} [${task.option.label}].$finalExt';
-      final saved = await StorageService.publish(
-        tempPath: outPath,
-        displayName: displayName,
-        mime: StorageService.mimeFor(finalExt, task.type == DownloadType.video),
-        subDir: subDir,
-        public: savePublic,
-        thumbUrl: task.thumbnailUrl,
-      );
-      task.filePath = saved.path;
+      final mime = StorageService.mimeFor(finalExt, task.type == DownloadType.video);
+      SavedFile saved;
+      if (saveLocation == 'custom' && customTreeUri != null) {
+        try {
+          saved = await StorageService.publishToTree(
+            tempPath: outPath,
+            treeUri: customTreeUri!,
+            displayName: displayName,
+            mime: mime,
+            thumbUrl: task.thumbnailUrl,
+          );
+        } catch (e) {
+          // Never lose a finished file: fall back to the public folder.
+          CrashLog.write('CUSTOM FOLDER save failed — falling back: $e');
+          saved = await StorageService.publish(
+            tempPath: outPath,
+            displayName: displayName,
+            mime: mime,
+            subDir: subDir,
+            location: 'default',
+            thumbUrl: task.thumbnailUrl,
+          );
+        }
+      } else {
+        saved = await StorageService.publish(
+          tempPath: outPath,
+          displayName: displayName,
+          mime: mime,
+          subDir: subDir,
+          location: saveLocation == 'app' ? 'app' : saveLocation,
+          volumeId: sdVolumeId,
+          thumbUrl: task.thumbnailUrl,
+        );
+      }
+      task.filePath = saved.path.isNotEmpty ? saved.path : (saved.uri ?? '');
       task.savedUri = saved.uri;
+      if (saved.folderLabel.isNotEmpty) task.destinationLabel = saved.folderLabel;
       _set(task, DownloadStatus.completed);
       unawaited(NotificationService.showDone(task.title, displayName));
     } catch (e) {
@@ -286,10 +387,12 @@ class DownloadManager extends ChangeNotifier {
           CrashLog.write('DOWNLOAD 403: ${task.title}', e.stackTrace);
           task.error = L.streamRejected;
         } else {
-          // Keep the raw error in the diagnostics log so mux/FFmpeg/storage
-          // failures can be diagnosed from the in-app error log.
+          // Keep the raw error in the diagnostics log so storage/processing
+          // failures can be diagnosed from the in-app report screen.
           CrashLog.write('DOWNLOAD FAILED [${task.option.label}]: $e', e is Error ? e.stackTrace : null);
-          task.error = e.toString();
+          // Show a friendly, human message — raw technical details stay in
+          // the diagnostics log only.
+          task.error = L.downloadFailedGeneric;
         }
         _set(task, DownloadStatus.failed);
       }
@@ -510,6 +613,7 @@ class DownloadManager extends ChangeNotifier {
 
   @override
   void dispose() {
+    _netTimer?.cancel();
     _dio.close();
     super.dispose();
   }

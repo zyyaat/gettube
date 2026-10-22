@@ -131,6 +131,8 @@ class DownloadTile extends StatelessWidget {
         return L.downloading;
       case DownloadStatus.processing:
         return L.processing;
+      case DownloadStatus.waitingForWifi:
+        return L.waitingForWifi;
       case DownloadStatus.paused:
         return L.paused;
       case DownloadStatus.completed:
@@ -150,6 +152,7 @@ class DownloadTile extends StatelessWidget {
       case DownloadStatus.canceled:
         return theme.colorScheme.error;
       case DownloadStatus.paused:
+      case DownloadStatus.waitingForWifi:
         return theme.colorScheme.tertiary;
       default:
         return theme.colorScheme.onSurfaceVariant;
@@ -181,6 +184,14 @@ class DownloadTile extends StatelessWidget {
             icon: const Icon(Icons.play_circle_outline),
             onPressed: () => DownloadManager.instance.resume(task),
           ),
+          IconButton(
+            tooltip: L.cancel,
+            icon: const Icon(Icons.close_rounded),
+            onPressed: () => DownloadManager.instance.cancel(task),
+          ),
+        ];
+      case DownloadStatus.waitingForWifi:
+        return [
           IconButton(
             tooltip: L.cancel,
             icon: const Icon(Icons.close_rounded),

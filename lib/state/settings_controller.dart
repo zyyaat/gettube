@@ -9,9 +9,19 @@ class SettingsController extends ChangeNotifier {
   ThemeMode themeMode = ThemeMode.dark;
   AppLang lang = AppLang.arabic;
   int maxConcurrent = 2;
-  bool savePublic = true;
   bool notifications = true;
   bool _seenDisclaimer = false;
+
+  /// Where downloads are saved: 'default' (public Downloads on the phone),
+  /// 'sdcard' (public Downloads on the SD card), 'custom' (user-picked SAF
+  /// folder), 'app' (app-private directory).
+  String saveLocation = 'default';
+  String? sdVolumeId;
+  String? customTreeUri;
+  String customFolderLabel = '';
+
+  /// Allow downloads over mobile data (when false: wait for Wi-Fi).
+  bool mobileDataAllowed = true;
 
   bool get seenDisclaimer => _seenDisclaimer;
 
@@ -20,7 +30,13 @@ class SettingsController extends ChangeNotifier {
     themeMode = ThemeMode.values[prefs.getInt('theme') ?? ThemeMode.dark.index];
     lang = (prefs.getInt('lang') ?? 0) == 0 ? AppLang.arabic : AppLang.english;
     maxConcurrent = prefs.getInt('parallel') ?? 2;
-    savePublic = prefs.getBool('public') ?? true;
+    // migrate the old single "public" toggle to the new location model
+    saveLocation = prefs.getString('saveLocation') ??
+        ((prefs.getBool('public') ?? true) ? 'default' : 'app');
+    sdVolumeId = prefs.getString('sdVolume');
+    customTreeUri = prefs.getString('customTree');
+    customFolderLabel = prefs.getString('customFolderLabel') ?? '';
+    mobileDataAllowed = prefs.getBool('mobileData') ?? true;
     notifications = prefs.getBool('notify') ?? true;
     _seenDisclaimer = prefs.getBool('disclaimer') ?? false;
     L.lang = lang;
@@ -44,17 +60,43 @@ class SettingsController extends ChangeNotifier {
   }
 
   Future<void> setMaxConcurrent(int n) async {
-    maxConcurrent = n.clamp(1, 4);
+    maxConcurrent = n.clamp(1, 10);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('parallel', maxConcurrent);
     _applyToEngine();
     notifyListeners();
   }
 
-  Future<void> setSavePublic(bool v) async {
-    savePublic = v;
+  Future<void> setSaveLocation(String v) async {
+    saveLocation = v;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('public', v);
+    await prefs.setString('saveLocation', v);
+    _applyToEngine();
+    notifyListeners();
+  }
+
+  Future<void> setSdVolumeId(String id) async {
+    sdVolumeId = id;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('sdVolume', id);
+    _applyToEngine();
+    notifyListeners();
+  }
+
+  Future<void> setCustomFolder(String uri, String label) async {
+    customTreeUri = uri;
+    customFolderLabel = label;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('customTree', uri);
+    await prefs.setString('customFolderLabel', label);
+    _applyToEngine();
+    notifyListeners();
+  }
+
+  Future<void> setMobileDataAllowed(bool v) async {
+    mobileDataAllowed = v;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('mobileData', v);
     _applyToEngine();
     notifyListeners();
   }
@@ -76,6 +118,10 @@ class SettingsController extends ChangeNotifier {
   void _applyToEngine() {
     DownloadManager.instance
       ..maxConcurrent = maxConcurrent
-      ..savePublic = savePublic;
+      ..saveLocation = saveLocation
+      ..sdVolumeId = sdVolumeId
+      ..customTreeUri = customTreeUri
+      ..customFolderLabel = customFolderLabel
+      ..mobileDataAllowed = mobileDataAllowed;
   }
 }

@@ -81,8 +81,20 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
   // ---------------- actions ----------------
 
+  String _mimeOf(SavedFile f) {
+    final dot = f.name.lastIndexOf('.');
+    final ext = dot > 0 ? f.name.substring(dot + 1) : '';
+    return StorageService.mimeFor(ext, f.isVideo);
+  }
+
   Future<void> _open(SavedFile f) async {
     final messenger = ScaffoldMessenger.of(context);
+    // Custom-folder saves live behind content:// URIs — open via platform.
+    if (f.uri != null && f.uri!.startsWith('content://')) {
+      final ok = await StorageService.openTarget(f.uri!, _mimeOf(f));
+      if (!ok) messenger.showSnackBar(SnackBar(content: Text(L.fileMissing)));
+      return;
+    }
     if (f.path.isEmpty || !File(f.path).existsSync()) {
       messenger.showSnackBar(SnackBar(content: Text(L.fileMissing)));
       return;
@@ -93,8 +105,29 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     }
   }
 
+  Future<void> _openLocation(SavedFile f) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final target = (f.uri != null && f.uri!.startsWith('content://')) ? f.uri! : f.path;
+    if (target.isEmpty) {
+      messenger.showSnackBar(SnackBar(content: Text(L.fileMissing)));
+      return;
+    }
+    final ok = await StorageService.openFolder(target);
+    if (!ok) messenger.showSnackBar(SnackBar(content: Text(L.folderOpenFailed)));
+  }
+
   Future<void> _share(List<SavedFile> files) async {
     final messenger = ScaffoldMessenger.of(context);
+    // content:// files (custom folder) go through the platform share sheet.
+    final contentFiles = files.where((f) => f.uri != null && f.uri!.startsWith('content://')).toList();
+    if (contentFiles.isNotEmpty && contentFiles.length == files.length) {
+      var anyOk = false;
+      for (final f in contentFiles) {
+        if (await StorageService.shareTarget(f.uri!, _mimeOf(f), title: f.name)) anyOk = true;
+      }
+      if (!anyOk) messenger.showSnackBar(SnackBar(content: Text(L.shareFailed)));
+      return;
+    }
     final existing = files.where((f) => f.path.isNotEmpty && File(f.path).existsSync()).toList();
     if (existing.isEmpty) {
       messenger.showSnackBar(SnackBar(content: Text(L.fileMissing)));
@@ -235,6 +268,14 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
               onTap: () {
                 Navigator.pop(ctx);
                 _share([f]);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_open_rounded),
+              title: Text(L.openFolderMenu),
+              onTap: () {
+                Navigator.pop(ctx);
+                _openLocation(f);
               },
             ),
             ListTile(
@@ -643,35 +684,61 @@ class _SavedTile extends StatelessWidget {
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 3),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (_quality != null) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: isAudio ? theme.colorScheme.tertiaryContainer : theme.colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  child: Text(
-                    _quality!,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: isAudio ? theme.colorScheme.tertiary : theme.colorScheme.primary,
+              Row(
+                children: [
+                  if (_quality != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: isAudio ? theme.colorScheme.tertiaryContainer : theme.colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        _quality!,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: isAudio ? theme.colorScheme.tertiary : theme.colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Expanded(
+                    child: Text(
+                      '$ext • ${file.sizeBytes > 0 ? formatBytes(file.sizeBytes) : '—'} • '
+                      '${file.modifiedAt.year}/${file.modifiedAt.month}/${file.modifiedAt.day}',
+                      style: theme.textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                ),
-                const SizedBox(width: 6),
-              ],
-              Expanded(
-                child: Text(
-                  '$ext • ${file.sizeBytes > 0 ? formatBytes(file.sizeBytes) : '—'} • '
-                  '${file.modifiedAt.year}/${file.modifiedAt.month}/${file.modifiedAt.day}',
-                  style: theme.textTheme.bodySmall,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                ],
               ),
+              // Where the file lives — shown right on the card.
+              if (file.folderLabel.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Icon(Icons.folder_outlined, size: 12, color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        file.folderLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: 11,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

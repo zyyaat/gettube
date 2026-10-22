@@ -74,10 +74,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
     try {
       final s = SettingsController();
       await s.load();
-
-      DownloadManager.instance
-        ..maxConcurrent = s.maxConcurrent
-        ..savePublic = s.savePublic;
+      // s.load() already applies every setting (incl. save location and
+      // mobile-data gate) to the download engine — nothing extra to copy.
 
       await StorageService.clearTemps();
       unawaited(NotificationService.init());

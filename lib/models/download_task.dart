@@ -2,7 +2,7 @@ import 'package:dio/dio.dart';
 
 import 'quality_option.dart';
 
-enum DownloadStatus { queued, fetching, downloading, processing, paused, completed, failed, canceled }
+enum DownloadStatus { queued, fetching, downloading, processing, paused, waitingForWifi, completed, failed, canceled }
 
 enum DownloadType { video, audio }
 
@@ -37,6 +37,9 @@ class DownloadTask {
   String? savedUri; // MediaStore content uri when public on Android 10+
   String? error;
 
+  /// Where the file will be / was saved, e.g. "Download/GetTube/Video".
+  String? destinationLabel;
+
   CancelToken? cancelToken;
 
   double get progress {
@@ -49,5 +52,6 @@ class DownloadTask {
       status == DownloadStatus.queued ||
       status == DownloadStatus.fetching ||
       status == DownloadStatus.downloading ||
-      status == DownloadStatus.processing;
+      status == DownloadStatus.processing ||
+      status == DownloadStatus.waitingForWifi;
 }

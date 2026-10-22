@@ -16,9 +16,7 @@ class AppMeta {
   AppMeta._();
 
   static const String name = 'GetTube';
-  static const String version = '1.0.0';
-  /// TODO: replace with the real GitHub repository URL before publishing.
-  static const String repoUrl = 'https://github.com/YOUR_USERNAME/gettube';
+  static const String version = '1.0.8';
 }
 
 /// Sub-directories used to organize saved media.

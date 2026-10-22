@@ -107,4 +107,6 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // SAF custom save folder (user-picked directory incl. SD card)
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }

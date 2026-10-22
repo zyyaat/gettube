@@ -8,8 +8,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
 import '../models/saved_file.dart';
 
-/// Saves finished files either to the public Downloads folder (via MediaStore
-/// on Android 10+, direct write on 9-) or to the app-specific directory.
+/// Saves finished files to one of the user-chosen locations:
+///  • default  — public Downloads/GetTube on the phone (MediaStore on 10+)
+///  • sdcard   — public Downloads/GetTube on the SD card (volume-aware)
+///  • custom   — any folder the user picked via SAF (incl. SD card)
+///  • app      — app-specific directory (private)
 /// Also keeps a registry of saved files so the Downloads screen survives
 /// app restarts.
 class StorageService {
@@ -18,16 +21,19 @@ class StorageService {
   static const MethodChannel _channel = MethodChannel('gettube/storage');
   static const String _registryKey = 'gettube.saved_files';
 
+  // ---------------- destinations ----------------
+
   /// Moves a finished file to its final destination and returns a SavedFile.
   static Future<SavedFile> publish({
     required String tempPath,
     required String displayName,
     required String mime,
     required String subDir, // StorageDirs.video | StorageDirs.audio
-    required bool public,
+    required String location, // 'default' | 'sdcard' | 'app'
+    String? volumeId,
     String? thumbUrl,
   }) async {
-    if (public) {
+    if (location == 'default' || location == 'sdcard') {
       final srcFile = File(tempPath);
       final int sizeBefore = srcFile.existsSync() ? srcFile.lengthSync() : 0;
       try {
@@ -36,10 +42,14 @@ class StorageService {
           'subDir': subDir,
           'name': displayName,
           'mime': mime,
+          'volume': location == 'sdcard' ? (volumeId ?? '') : 'primary',
         });
         final map = Map<String, dynamic>.from(res as Map);
         final path = (map['path'] as String?) ?? '';
         final uri = (map['uri'] as String?) ?? '';
+        final label = location == 'sdcard'
+            ? 'SD/Download/GetTube/$subDir'
+            : 'Download/GetTube/$subDir';
         final saved = SavedFile(
           name: displayName,
           path: path.isNotEmpty ? path : tempPath,
@@ -48,6 +58,7 @@ class StorageService {
           modifiedAt: DateTime.now(),
           isVideo: subDir == StorageDirs.video,
           thumbUrl: thumbUrl,
+          folderLabel: label,
         );
         await _register(saved);
         // source already moved by the platform side; best-effort cleanup
@@ -81,8 +92,45 @@ class StorageService {
       modifiedAt: File(dest.path).lastModifiedSync(),
       isVideo: subDir == StorageDirs.video,
       thumbUrl: thumbUrl,
+      folderLabel: 'GetTube/$subDir',
     );
     await _register(saved);
+    return saved;
+  }
+
+  /// Copies a finished file into a user-picked SAF folder (custom location).
+  static Future<SavedFile> publishToTree({
+    required String tempPath,
+    required String treeUri,
+    required String displayName,
+    required String mime,
+    String? thumbUrl,
+  }) async {
+    final srcFile = File(tempPath);
+    final int size = srcFile.existsSync() ? srcFile.lengthSync() : 0;
+    final res = await _channel.invokeMethod('saveFileToTree', {
+      'src': tempPath,
+      'tree': treeUri,
+      'name': displayName,
+      'mime': mime,
+    });
+    final map = Map<String, dynamic>.from(res as Map);
+    final saved = SavedFile(
+      name: (map['name'] as String?) ?? displayName,
+      path: '',
+      uri: map['uri'] as String?,
+      sizeBytes: size,
+      modifiedAt: DateTime.now(),
+      isVideo: mime.startsWith('video'),
+      thumbUrl: thumbUrl,
+      folderLabel: (map['folder'] as String?) ?? '',
+    );
+    await _register(saved);
+    if (srcFile.existsSync()) {
+      try {
+        srcFile.deleteSync();
+      } catch (_) {}
+    }
     return saved;
   }
 
@@ -99,6 +147,85 @@ class StorageService {
     return out;
   }
 
+  // ---------------- volumes / folders / network ----------------
+
+  /// Available storage volumes: [{id, removable, root}].
+  static Future<List<Map<String, dynamic>>> getVolumes() async {
+    try {
+      final res = await _channel.invokeMethod('getStorageInfo');
+      return List<Map<String, dynamic>>.from(
+        (res as List).map((e) => Map<String, dynamic>.from(e as Map)),
+      );
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Opens the SAF directory picker. Returns {uri, name} or null (canceled).
+  static Future<Map<String, String>?> pickFolder() async {
+    try {
+      final res = await _channel.invokeMethod('pickFolder');
+      if (res == null) return null;
+      return Map<String, String>.from(res as Map);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Creates a subfolder inside [treeUri] and returns {uri, name} for it.
+  static Future<Map<String, String>?> createFolder(String treeUri, String name) async {
+    try {
+      final res = await _channel.invokeMethod('createFolder', {'tree': treeUri, 'name': name});
+      if (res == null) return null;
+      return Map<String, String>.from(res as Map);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Opens a content:// file with a viewer app.
+  static Future<bool> openTarget(String uri, String mime) async {
+    try {
+      final res = await _channel.invokeMethod('openFile', {'target': uri, 'mime': mime});
+      return res == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Shares a content:// file.
+  static Future<bool> shareTarget(String uri, String mime, {String title = 'GetTube'}) async {
+    try {
+      final res = await _channel.invokeMethod(
+        'shareFile',
+        {'target': uri, 'mime': mime, 'title': title},
+      );
+      return res == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens the containing folder in the system Files app.
+  static Future<bool> openFolder(String target) async {
+    try {
+      final res = await _channel.invokeMethod('openFolder', {'target': target});
+      return res == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// True when the active network is metered (mobile data).
+  static Future<bool> isMetered() async {
+    try {
+      final res = await _channel.invokeMethod('networkInfo');
+      return (res as Map)['metered'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ---------------- Registry ----------------
 
   static Future<void> _register(SavedFile f) async {
@@ -112,6 +239,7 @@ class StorageService {
       'date': f.modifiedAt.millisecondsSinceEpoch,
       'video': f.isVideo,
       'thumb': f.thumbUrl ?? '',
+      'folder': f.folderLabel,
     }));
     // keep the last 300 entries
     final trimmed = list.length > 300 ? list.sublist(list.length - 300) : list;
@@ -143,6 +271,7 @@ class StorageService {
           modifiedAt: date,
           isVideo: m['video'] as bool? ?? false,
           thumbUrl: (m['thumb'] as String?)?.isEmpty == true ? null : m['thumb'] as String?,
+          folderLabel: m['folder'] as String? ?? '',
         ));
       } catch (_) {
         // skip corrupted entry
@@ -175,7 +304,7 @@ class StorageService {
     final filtered = list.where((raw) {
       try {
         final m = jsonDecode(raw) as Map<String, dynamic>;
-        return m['path'] != f.path;
+        return m['path'] != f.path && m['uri'] != (f.uri ?? '');
       } catch (_) {
         return true;
       }

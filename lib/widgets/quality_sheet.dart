@@ -92,7 +92,7 @@ class _QualitySheetState extends State<QualitySheet> {
                       const SizedBox(height: 4),
                       Row(
                         children: [
-                          Icon(Icons.merge, size: 14, color: theme.colorScheme.primary),
+                          Icon(Icons.auto_awesome_rounded, size: 14, color: theme.colorScheme.primary),
                           const SizedBox(width: 4),
                           Expanded(child: Text(L.autoMuxNote, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant))),
                         ],
@@ -230,8 +230,7 @@ class _OptionTile extends StatelessWidget {
           ],
         ),
         subtitle: Text(
-          '${option.container} • ${formatBytes(option.sizeBytes)}'
-          '${option.kind == QualityKind.videoOnly ? ' • DASH' : ''}',
+          '${option.container} • ${formatBytes(option.sizeBytes)}',
           style: theme.textTheme.bodySmall,
         ),
         trailing: selected
