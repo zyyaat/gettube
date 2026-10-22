@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   export:
-    name: Build APKs (arm32 + universal)
+    name: Build APK (universal)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -40,23 +40,9 @@ jobs:
       - name: Decode stable release keystore (GitHub Secrets)
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
 
-      - name: Build APK (arm32) — signed with the FIXED release key
-        env:
-          KEYSTORE_PATH: ${{ github.workspace }}/android/app/upload-keystore.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-        run: flutter build apk --release --target-platform android-arm
-
-      # Save arm32 output BEFORE the universal build overwrites app-release.apk
-      - name: Keep arm32 output
-        run: |
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk "dist/GetTube-arm32-r${{ github.run_number }}.apk"
-
-      # Universal APK: arm32 (old phones) + arm64 (modern/64-bit-only phones)
-      # + x86_64 (emulators, Chromebooks). Same FIXED release key => installs
-      # over any previous GetTube build.
+      # Single universal APK: arm32 (old phones) + arm64 (modern/64-bit-only
+      # phones) + x86_64 (emulators, Chromebooks). One file for every device.
+      # Same FIXED release key => installs over any previous GetTube build.
       - name: "Build APK (universal: arm32 + arm64 + x86_64)"
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/android/app/upload-keystore.jks
@@ -83,14 +69,12 @@ jobs:
           name: GetTube build ${{ github.run_number }}
           files: dist/*.apk
           body: |
-            🚀 **GetTube build ${{ github.run_number }}**
+            🚀 **GetTube build ${{ github.run_number }}
 
-            - نسختان للتحميل:
-              - `GetTube-universal-r*.apk` — **تُثبَّت على أي جهاز حديث أو قديم** (arm32 + arm64 + x86_64) — الموصى بها
-              - `GetTube-arm32-r*.apk` — خفيفة الحجم (~41MB أصغر) للهواتف القديمة فقط
-            - كل الجودات مجاناً: 144p حتى 8K — بدون اشتراك وبدون جدار دفع
-            - دمج تلقائي للصوت مع الفيديو (DASH) + تحويل MP3
-            - موقّعة بمفتاح ثابت: التحديثات الجديدة تُثبَّت فوق القديمة مباشرة
+            - ملف واحد للتحميل: `GetTube-universal-r*.apk` — **يشتغل على أي جهاز حديث أو قديم**
+            - كل الجودات مجاناً: من 144p حتى 8K — بدون اشتراك
+            - الفيديو والصوت في ملف واحد جاهز للمشاركة + إمكانية تحويل MP3
+            - التحديثات الجديدة تُثبَّت فوق القديمة مباشرة بدون حذف التطبيق
 
             > حمّل ملف APK من قسم Assets تحت 👇
           make_latest: true
@@ -101,6 +85,6 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: GetTube-APKs
+          name: GetTube-APK
           path: dist/*.apk
           retention-days: 7
