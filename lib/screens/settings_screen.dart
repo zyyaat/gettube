@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/constants.dart';
 import '../core/i18n.dart';
 import '../services/storage_service.dart';
+import '../services/update_service.dart';
 import '../state/settings_controller.dart';
 import 'diagnostics_screen.dart';
 
@@ -466,8 +468,44 @@ class _StorageTabState extends State<_StorageTab> {
 
 // ---------------- About ----------------
 
-class _AboutTab extends StatelessWidget {
+class _AboutTab extends StatefulWidget {
   const _AboutTab();
+
+  @override
+  State<_AboutTab> createState() => _AboutTabState();
+}
+
+class _AboutTabState extends State<_AboutTab> {
+  bool _checking = false;
+
+  Future<void> _check() async {
+    setState(() => _checking = true);
+    UpdateInfo? found;
+    try {
+      found = await UpdateService.check();
+    } catch (_) {
+      found = null;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(L.updateCheckFailed)));
+      setState(() => _checking = false);
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _checking = false);
+    if (found != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(L.updateFound(found.version))));
+      try {
+        await launchUrl(Uri.parse(found.apkUrl), mode: LaunchMode.externalApplication);
+      } catch (_) {
+        try {
+          await launchUrl(Uri.parse(found.releaseUrl), mode: LaunchMode.externalApplication);
+        } catch (_) {}
+      }
+    } else {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(L.updateIsLatest(AppMeta.version))));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -496,6 +534,19 @@ class _AboutTab extends StatelessWidget {
           ],
         ),
         _tabTitle(context, L.about),
+        _Group(
+          children: [
+            ListTile(
+              leading: _checking
+                  ? const SizedBox(
+                      width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.system_update_rounded),
+              title: Text(_checking ? L.checkingForUpdates : L.checkForUpdates),
+              subtitle: Text(L.updateBannerHint),
+              onTap: _checking ? null : _check,
+            ),
+          ],
+        ),
         _Group(
           children: [
             Padding(

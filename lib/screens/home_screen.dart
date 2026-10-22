@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../core/i18n.dart';
+import '../services/update_service.dart';
 import '../services/youtube_service.dart';
 import '../widgets/video_card.dart';
 import 'video_screen.dart';
@@ -28,10 +30,43 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loadingMore = false;
   String? _error;
 
+  /// Update check happens once per app run, 3s after launch (never competing
+  /// with startup work). A newer GitHub release shows a dismissible banner.
+  static UpdateInfo? _update;
+  static bool _checked = false;
+
   @override
   void initState() {
     super.initState();
     _loadRecent();
+    _checkUpdate();
+  }
+
+  Future<void> _checkUpdate() async {
+    if (_checked) {
+      if (_update != null && mounted) setState(() {});
+      return;
+    }
+    _checked = true;
+    await Future<void>.delayed(const Duration(seconds: 3));
+    try {
+      _update = await UpdateService.check();
+    } catch (_) {
+      _update = null; // silent — never disturb the user over a failed check
+    }
+    if (mounted && _update != null) setState(() {});
+  }
+
+  Future<void> _openUpdate() async {
+    final u = _update;
+    if (u == null) return;
+    try {
+      await launchUrl(Uri.parse(u.apkUrl), mode: LaunchMode.externalApplication);
+    } catch (_) {
+      try {
+        await launchUrl(Uri.parse(u.releaseUrl), mode: LaunchMode.externalApplication);
+      } catch (_) {}
+    }
   }
 
   @override
@@ -160,6 +195,8 @@ class _HomeScreenState extends State<HomeScreen> {
               onChanged: (_) => setState(() {}),
             ),
           ),
+          // Newer release found → show the update banner (dismissible).
+          if (_update != null) _updateBanner(context, theme),
           // Recent searches
           if (_results.isEmpty && !_loading && _recent.isNotEmpty)
             Padding(
@@ -198,6 +235,77 @@ class _HomeScreenState extends State<HomeScreen> {
           // Body
           Expanded(child: _body(context)),
         ],
+      ),
+    );
+  }
+
+  Widget _updateBanner(BuildContext context, ThemeData theme) {
+    final u = _update!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [theme.colorScheme.primary, theme.colorScheme.tertiary],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.system_update_rounded, color: Colors.white, size: 26),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          L.updateAvailableTitle,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                              color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          L.updateAvailableBody(u.version),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                              color: Colors.white.withValues(alpha: 0.95)),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: _openUpdate,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: theme.colorScheme.primary,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                    child: Text(L.updateNow),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white70, size: 20),
+                    onPressed: () => setState(() => _update = null),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  L.updateBannerHint,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.white.withValues(alpha: 0.75)),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -159,6 +159,26 @@ class L {
   static String get reportProblem => _ar ? 'الإبلاغ عن مشكلة' : 'Report a problem';
   static String get reportProblemHint => _ar ? 'انسخ التفاصيل وأرسلها لنا إذا واجهت أي مشكلة' : 'Copy the details and send them to us if something goes wrong';
 
+  // ---- Updates ----
+  static String get updateAvailableTitle => _ar ? 'يوجد تحديث جديد' : 'Update available';
+  static String updateAvailableBody(String v) => _ar
+      ? 'إصدار جديد $v متاح — نزّله الآن لتجربة أسرع وأكثر ثباتاً'
+      : 'New version $v is out — install it for a faster, more stable experience';
+  static String get updateNow => _ar ? 'نزّل التحديث' : 'Update now';
+  static String get checkForUpdates => _ar ? 'فحص وجود تحديث' : 'Check for updates';
+  static String get checkingForUpdates => _ar ? 'جاري الفحص…' : 'Checking…';
+  static String updateIsLatest(String v) =>
+      _ar ? 'التطبيق محدَّث — لديك أحدث إصدار ($v)' : 'Up to date — you have the latest version ($v)';
+  static String updateFound(String v) => _ar
+      ? 'متوفر إصدار جديد ($v) — سيفتح المتصفح لتنزيله'
+      : 'New version available ($v) — opening the browser to download it';
+  static String get updateCheckFailed => _ar
+      ? 'تعذر الفحص الآن — تأكد من اتصالك بالإنترنت'
+      : 'Could not check right now — check your internet connection';
+  static String get updateBannerHint => _ar
+      ? 'نزّل الملف ثم افتحه لتثبيت الإصدار الجديد فوق الحالي'
+      : 'Download the file, then open it to install over the current version';
+
   // ---- First-run disclaimer ----
   static String get disclaimerTitle => _ar ? 'مرحباً بك في GetTube 👋' : 'Welcome to GetTube 👋';
   static String get disclaimerBody => _ar
