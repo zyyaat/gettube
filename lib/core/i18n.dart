@@ -207,4 +207,8 @@ class L {
   static String get downloadFailedGeneric => _ar
       ? 'حدث خطأ أثناء التنزيل — تحقق من اتصالك وحاول مجدداً'
       : 'Something went wrong — check your connection and try again';
+
+  static String get botGateHint => _ar
+      ? 'يوتيوب حاجب شبكتك مؤقتاً (حماية ضد التحميل الآلي). جرّب: بدّل بين Wi‑Fi وبيانات الموبايل، أو استنى ١٠–١٥ دقيقة ثم اضغط إعادة المحاولة — الضغط المتكرر يطيل الحظر'
+      : 'YouTube is temporarily blocking this network (anti-bot protection). Try switching between Wi‑Fi and mobile data, or wait 10–15 minutes then retry — rapid retries extend the block';
 }

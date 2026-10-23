@@ -437,8 +437,15 @@ class DownloadManager extends ChangeNotifier {
         return m;
       }
 
+      bool botGated = false;
       for (int pass = 0; pass < _clientLadder.length; pass++) {
         final client = _clientLadder[pass];
+        // YouTube's bot gate is per-NETWORK, not per-client: once it answers,
+        // every remaining innertube client returns the SAME gate within
+        // seconds. Fast-forward straight to the watch-page client (safari)
+        // instead of burning ~15s per doomed client (real user log:
+        // 45s of retries that all died with the same reason).
+        if (botGated && client != YoutubeApiClient.safari) continue;
         final isLastClient = pass == _clientLadder.length - 1;
         try {
           final manifest = await manifestFor(client);
@@ -494,6 +501,12 @@ class DownloadManager extends ChangeNotifier {
           // (VideoUnplayable, TransientFailure, rate limits, innertube 4xx)
           // are NOT DioExceptions. They used to escape this ladder entirely
           // and kill the task within ~2 seconds. Next client instead.
+          if (_botGateExp.hasMatch(e.toString())) {
+            botGated = true;
+            CrashLog.write(
+                'BOT GATE via ${_clientName(client)} — fast-forwarding to watch-page client');
+            continue;
+          }
           if (!isLastClient && !_stopIntent.containsKey(task.id)) {
             CrashLog.write('manifest ${e.runtimeType} from client ${_clientName(client)} — switching client');
             await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -511,7 +524,9 @@ class DownloadManager extends ChangeNotifier {
         }
       }
       // Every client exhausted without a usable stream for this tag.
-      if (!resolved) throw Exception(L.qualityNotAvailable);
+      if (!resolved) {
+        throw Exception(botGated ? L.botGateHint : L.qualityNotAvailable);
+      }
 
       // 2) mux / convert — with LIVE progress (a 4K merge used to look
       // frozen because nothing on the card moved during this phase).
@@ -631,6 +646,11 @@ class DownloadManager extends ChangeNotifier {
         } else if (e is DioException && e.response?.statusCode == 403) {
           CrashLog.write('DOWNLOAD 403: ${task.title}', e.stackTrace);
           task.error = L.streamRejected;
+        } else if (_botGateExp.hasMatch(e.toString())) {
+          // YouTube answered the whole ladder with its bot gate — show the
+          // honest network-level explanation instead of a generic failure.
+          CrashLog.write('BOT GATE (final): ${task.title} — $e');
+          task.error = L.botGateHint;
         } else {
           // Keep the raw error in the diagnostics log so storage/processing
           // failures can be diagnosed from the in-app report screen.
@@ -657,18 +677,40 @@ class DownloadManager extends ChangeNotifier {
     return null;
   }
 
-  /// The client ladder. Order = preference:
+  /// The client ladder. Order = preference, each entry is a DIFFERENT
+  /// enforcement surface YouTube gates independently:
   ///  1. androidSdkless — ANDROID without androidSdkVersion: mints URLs that
-  ///     need NO PO Token (mirrors yt-dlp's android_sdkless). Primary.
-  ///  2. tv (TVHTML5, Nov-2025 build) — very reliable direct URLs.
-  ///  3. ios — minted URLs download cleanly with the iOS app UA.
-  ///  4. androidVr — last resort, high-quality capable.
+  ///     need NO PO Token on healthy IPs (mirrors yt-dlp's android_sdkless).
+  ///  2. mediaConnect — MEDIA_CONNECT_FRONTEND (Chromecast family): the
+  ///     client that kept minting PO-Token-free URLs longest (yt-dlp's
+  ///     mconnect fallback).
+  ///  3. tv — TVHTML5: very reliable direct URLs when not gated.
+  ///  4. ios — minted URLs download cleanly with the iOS app UA.
+  ///  5. androidVr — last innertube app client, high-quality capable.
+  ///  6. safari — WEB client via the watch page: a plain-browser surface
+  ///     that often still answers when every app client is bot-gated.
+  ///     (tvSimplyEmbedded skipped: deprecated upstream — YouTube now
+  ///     requires authentication for it, so it can never yield streams.)
+  ///
+  /// 2026 reality: YouTube now bot-gates whole networks ("Sign in to
+  /// confirm you're not a bot"). When that message appears, every remaining
+  /// innertube client will return the SAME gate — so [_run] fast-forwards
+  /// to the watch-page client and fails with a clear hint instead of
+  /// burning a minute on doomed retries.
   static final List<YoutubeApiClient> _clientLadder = [
     YoutubeApiClient.androidSdkless,
+    YoutubeApiClient.mediaConnect,
     YoutubeApiClient.tv,
     YoutubeApiClient.ios,
     YoutubeApiClient.androidVr,
+    YoutubeApiClient.safari,
   ];
+
+  /// Matches YouTube's bot-gate playability reason. Shared across all
+  /// innertube clients for a gated network — seeing it once means the
+  /// rest of the app-client ladder is wasted time.
+  static final RegExp _botGateExp =
+      RegExp(r"not a bot|confirm you.?re|Sign in to confirm", caseSensitive: false);
 
   /// Human-readable client name for diagnostics.
   static String _clientName(YoutubeApiClient c) {
@@ -680,8 +722,12 @@ class DownloadManager extends ChangeNotifier {
 
   /// User-Agent of the client that minted the URL. Google's video servers
   /// enforce that the download UA matches the minting client — a mismatched
-  /// or generic UA is rejected with 403.
+  /// or generic UA is rejected with 403. Every [YoutubeApiClient] payload
+  /// carries its canonical `userAgent`; the switch below is only a fallback
+  /// for payloads without one.
   static String _uaForClient(YoutubeApiClient c) {
+    final payloadUa = c.payload['userAgent'];
+    if (payloadUa is String && payloadUa.isNotEmpty) return payloadUa;
     final ctx = c.payload['context']['client'] as Map?;
     final name = ctx?['clientName']?.toString() ?? '';
     final ver = ctx?['clientVersion']?.toString() ?? '0';
@@ -691,6 +737,7 @@ class DownloadManager extends ChangeNotifier {
       case 'ANDROID_VR':
         return 'com.google.android.apps.youtube.vr.oculus/$ver (Linux; U; Android 12; Quest 3) gzip';
       case 'TVHTML5':
+      case 'TVHTML5_SIMPLY_EMBEDDED_PLAYER':
         return 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version,gzip(gfe)';
       default: // ANDROID (both sdkless and sdk variants)
         return 'com.google.android.youtube/$ver (Linux; U; Android 11) gzip';
