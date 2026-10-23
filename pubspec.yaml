@@ -1,7 +1,7 @@
 name: gettube
 description: "GetTube — Free & open-source video downloader. Every quality YouTube offers (144p to 8K), zero ads, zero paywalls."
 publish_to: "none"
-version: 1.0.16+17
+version: 1.0.17+18
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -32,6 +32,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   ffmpeg_kit_flutter_new_audio: ^2.5.7
   shared_preferences_android: ">=2.4.28 <2.5.0"
+  flutter_inappwebview: ^6.1.5
 
 dev_dependencies:
   flutter_test:

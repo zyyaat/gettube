@@ -16,6 +16,7 @@ import '../core/i18n.dart';
 import '../models/download_task.dart';
 import '../models/quality_option.dart';
 import '../models/saved_file.dart';
+import 'browser_session.dart';
 import 'crash_log.dart';
 import 'media_service.dart';
 import 'notification_service.dart';
@@ -547,6 +548,58 @@ class DownloadManager extends ChangeNotifier {
         }
       }
       // Every client exhausted without a usable stream for this tag.
+      if (!resolved && !_stopIntent.containsKey(task.id)) {
+        // BROWSER PASS — the last resort before failing. To YouTube, the
+        // hidden WebView IS a real browser: its own web player runs
+        // BotGuard, mints PO tokens and deciphers signatures exactly like
+        // it does for human viewers, so its googlevideo URLs download even
+        // when every API client is bot-gated (the trick commercial
+        // downloaders run on their servers — done here fully client-side).
+        try {
+          CrashLog.write(
+              'BROWSER pass: hidden browser capture (tag ${task.option.videoTag})');
+          final wanted = <int>{
+            task.option.videoTag,
+            if (task.option.audioTag != null) task.option.audioTag!,
+          };
+          final s = await BrowserSession.capture(task.videoId, wantedTags: wanted);
+          final mainUrl = s.urls[task.option.videoTag];
+          if (mainUrl != null) {
+            task.total = task.option.sizeBytes;
+            task.received = 0;
+            _set(task, DownloadStatus.downloading);
+            mainPath = '${tmpDir.path}/${task.id}.main.${task.option.srcExt}';
+            await _downloadToFile(mainUrl.toString(), mainPath, task, s.userAgent);
+            audioPath = null;
+            if (task.option.audioTag != null) {
+              final audioUrl = s.urls[task.option.audioTag!];
+              if (audioUrl == null) {
+                throw Exception('browser session had no audio itag ${task.option.audioTag}');
+              }
+              audioPath =
+                  '${tmpDir.path}/${task.id}.audio.${task.option.audioTag == 140 ? 'm4a' : 'webm'}';
+              await _downloadToFile(audioUrl.toString(), audioPath, task,
+                  s.userAgent,
+                  counted: false);
+            }
+            resolved = true;
+            CrashLog.write('BROWSER pass: SUCCESS (tag ${task.option.videoTag})');
+          } else {
+            CrashLog.write(
+                'BROWSER pass: no itag ${task.option.videoTag} in ${s.urls.keys.toList()}');
+          }
+        } on DioException catch (e) {
+          // A pause/cancel during the browser pass must still reach the
+          // outer handler; a plain 403 just means this route failed too.
+          if (_stopIntent.containsKey(task.id)) rethrow;
+          final code = e.response?.statusCode;
+          CrashLog.write(
+              'BROWSER pass download failed: ${e.type}${code == null ? '' : ' $code'}');
+        } catch (e) {
+          CrashLog.write(
+              'BROWSER pass failed: ${e.runtimeType}: ${e.toString().split('\n').first}');
+        }
+      }
       if (!resolved) {
         // BotGateFailure (NOT a bare Exception): the outer catch used to
         // re-wrap this as the generic error because the hint text never

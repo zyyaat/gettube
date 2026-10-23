@@ -11,6 +11,7 @@ import 'core/i18n.dart';
 import 'screens/downloads_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
+import 'services/browser_session.dart';
 import 'services/crash_log.dart';
 import 'services/download_manager.dart';
 import 'services/notification_service.dart';
@@ -119,6 +120,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
   Widget build(BuildContext context) {
     if (_error != null) {
       return MaterialApp(
+        navigatorKey: BrowserSession.navKey,
         debugShowCheckedModeBanner: false,
         theme: _bootTheme(),
         home: _BootErrorScreen(error: _error!, stack: _stack, onRetry: _boot),
@@ -126,6 +128,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
     }
     if (_settings == null) {
       return MaterialApp(
+        navigatorKey: BrowserSession.navKey,
         debugShowCheckedModeBanner: false,
         theme: _bootTheme(),
         home: const _SplashScreen(),
@@ -315,6 +318,7 @@ class GetTubeApp extends StatelessWidget {
         builder: (context, s, _) {
           L.lang = s.lang;
           return MaterialApp(
+            navigatorKey: BrowserSession.navKey,
             title: 'GetTube',
             debugShowCheckedModeBanner: false,
             theme: _theme(Brightness.light),
