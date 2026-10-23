@@ -61,11 +61,27 @@ class DownloadManager extends ChangeNotifier {
   Timer? _netTimer;
   bool _metered = false;
 
-  /// Slots actually consumed by running work (waiting tasks don't count).
-  int get activeCount =>
-      tasks.where((t) => t.status == DownloadStatus.queued || t.status == DownloadStatus.fetching || t.status == DownloadStatus.downloading || t.status == DownloadStatus.processing).length;
+  /// Slots are occupied ONLY by real running work (fetching/downloading/
+  /// processing). Queued tasks are the ones WAITING for a slot — counting
+  /// them here made the scheduler see phantom-busy slots whenever the
+  /// number of queued tasks reached maxConcurrent (easy with 2+ quick taps),
+  /// and then NOTHING ever started: every pump recomputed free = 0 and the
+  /// queue froze in "في الانتظار" forever. This was the stuck-queue root
+  /// cause since v1.0 — the early releases only got away with it because
+  /// slow manifest fetches made back-to-back enqueues rare.
+  ///
+  /// Safe against double-starts: _run() sets `fetching` synchronously before
+  /// its first await, so by the time any later pump pass looks at the task
+  /// it already occupies a real slot.
+  int get activeCount => tasks
+      .where((t) =>
+          t.status == DownloadStatus.fetching ||
+          t.status == DownloadStatus.downloading ||
+          t.status == DownloadStatus.processing)
+      .length;
 
-  bool get hasActive => activeCount > 0;
+  /// Anything that still needs the device awake (queued, running, saving).
+  bool get hasActive => tasks.any((t) => t.isActive);
 
   // ---------------- queue control ----------------
 

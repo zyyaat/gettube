@@ -216,11 +216,19 @@ class StorageService {
     }
   }
 
-  /// True when the active network is metered (mobile data).
+  /// True ONLY on real mobile data (CELLULAR).
+  ///
+  /// Android reports `isActiveNetworkMetered == true` for shared phone
+  /// hotspots even though they are Wi-Fi — users standing on "Wi-Fi" then
+  /// saw their queue stuck on "بانتظار Wi-Fi" forever when the mobile-data
+  /// gate was enabled. From the user's perspective (and SnapTube's), a
+  /// Wi-Fi hotspot is Wi-Fi: only a real cellular connection holds the gate.
   static Future<bool> isMetered() async {
     try {
-      final res = await _channel.invokeMethod('networkInfo');
-      return (res as Map)['metered'] == true;
+      final res = (await _channel.invokeMethod('networkInfo')) as Map;
+      final metered = res['metered'] == true;
+      final wifi = res['wifi'] == true;
+      return metered && !wifi;
     } catch (_) {
       return false;
     }
