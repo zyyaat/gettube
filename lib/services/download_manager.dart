@@ -521,11 +521,38 @@ class DownloadManager extends ChangeNotifier {
             continue;
           }
           rethrow;
+        } catch (e, st) {
+          // LAST-RESORT NET — the watch-page (safari/WEB) pass throws a raw
+          // ArgumentError ("No host specified in URI") when a bot-gated watch
+          // page lists streams whose baseUrl was stripped: Uri.parse('')
+          // does NOT throw, so youtube_explode yields an empty Uri and its
+          // own HEAD probe explodes with an error class none of the catches
+          // above know. Real user log: the task died on exactly that instead
+          // of the honest network hint. ANY unexpected error is now treated
+          // like every other client failure — never a cryptic task death.
+          if (botGated) {
+            CrashLog.write(
+                'watch-page pass failed on gated network (${e.runtimeType}: ${e.toString().split('\n').first}) — surfacing network hint',
+                st);
+            break; // → !resolved below → the honest bot-gate hint
+          }
+          if (!isLastClient && !_stopIntent.containsKey(task.id)) {
+            CrashLog.write(
+                'manifest unexpected ${e.runtimeType} from client ${_clientName(client)} — switching client',
+                st);
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            continue;
+          }
+          rethrow;
         }
       }
       // Every client exhausted without a usable stream for this tag.
       if (!resolved) {
-        throw Exception(botGated ? L.botGateHint : L.qualityNotAvailable);
+        // BotGateFailure (NOT a bare Exception): the outer catch used to
+        // re-wrap this as the generic error because the hint text never
+        // matched the gate regex — the honest advice never reached the card.
+        if (botGated) throw BotGateFailure();
+        throw Exception(L.qualityNotAvailable);
       }
 
       // 2) mux / convert — with LIVE progress (a 4K merge used to look
@@ -646,6 +673,13 @@ class DownloadManager extends ChangeNotifier {
         } else if (e is DioException && e.response?.statusCode == 403) {
           CrashLog.write('DOWNLOAD 403: ${task.title}', e.stackTrace);
           task.error = L.streamRejected;
+        } else if (e is BotGateFailure) {
+          // The ladder ended inside YouTube's bot gate — surface the honest
+          // network-level explanation. (Before this branch, the hint thrown
+          // as a bare Exception was silently downgraded to the generic
+          // error because its text never matched the gate regex.)
+          CrashLog.write('BOT GATE (final): ${task.title}');
+          task.error = L.botGateHint;
         } else if (_botGateExp.hasMatch(e.toString())) {
           // YouTube answered the whole ladder with its bot gate — show the
           // honest network-level explanation instead of a generic failure.
@@ -672,7 +706,13 @@ class DownloadManager extends ChangeNotifier {
   StreamInfo? _pickStream(StreamManifest? manifest, int tag) {
     if (manifest == null) return null;
     for (final s in manifest.streams) {
-      if (s.tag == tag) return s;
+      if (s.tag == tag) {
+        // A bot-gated watch page can list streams whose baseUrl was stripped
+        // — an empty Uri downloads nothing and would poison the engine.
+        // Treat it as "tag not offered" so the ladder tries the next client.
+        if (s.url.host.isEmpty) return null;
+        return s;
+      }
     }
     return null;
   }
@@ -1247,4 +1287,14 @@ class DownloadManager extends ChangeNotifier {
     _dio.close();
     super.dispose();
   }
+}
+
+/// The whole client ladder ended inside YouTube's network-level bot gate
+/// ("Sign in to confirm you're not a bot"). A typed marker: the outer
+/// handler maps it to the pre-localized [L.botGateHint] no matter what text
+/// the gate returned, so the user always gets the honest advice — switch
+/// Wi-Fi ↔ mobile data, wait, retry — instead of a generic error.
+class BotGateFailure implements Exception {
+  @override
+  String toString() => 'BotGateFailure';
 }
