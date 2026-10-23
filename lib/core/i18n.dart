@@ -60,6 +60,7 @@ class L {
   // ---- Downloads ----
   static String get downloads => _ar ? 'التنزيلات' : 'Downloads';
   static String get activeDownloads => _ar ? 'جاري التنزيل' : 'In progress';
+  static String get historyTitle => _ar ? 'السجل' : 'History';
   static String get savedFiles => _ar ? 'الملفات المحفوظة' : 'Saved files';
   static String get noDownloads => _ar ? 'لا توجد تنزيلات بعد' : 'No downloads yet';
   static String get noSavedFiles => _ar ? 'لم يتم حفظ ملفات بعد' : 'No saved files yet';

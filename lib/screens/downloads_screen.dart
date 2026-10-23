@@ -42,12 +42,38 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
 
   final Set<String> _selected = {}; // SavedFile.path
 
+  /// Completed task ids already reflected in the saved-files list —
+  /// a task that just finished must NEVER leave the screen silently:
+  /// it leaves "active" and re-appears as a saved file right after.
+  final Set<String> _completedSeen = {};
+
   bool get _selecting => _selected.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
     _refreshSaved();
+    DownloadManager.instance.addListener(_onQueueChanged);
+  }
+
+  @override
+  void dispose() {
+    DownloadManager.instance.removeListener(_onQueueChanged);
+    super.dispose();
+  }
+
+  /// When a task turns completed, refresh the saved-files list immediately —
+  /// the old screen only requeried on open/pull-to-refresh, so a fast
+  /// download (finished in ~2s) LEFT the active section before the file
+  /// list knew about it: the card vanished with no trace.
+  void _onQueueChanged() {
+    var fresh = false;
+    for (final t in DownloadManager.instance.tasks) {
+      if (t.status == DownloadStatus.completed && _completedSeen.add(t.id)) {
+        fresh = true;
+      }
+    }
+    if (fresh) _refreshSaved();
   }
 
   Future<void> _refreshSaved() async {
@@ -306,7 +332,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   Widget build(BuildContext context) {
     final manager = context.watch<DownloadManager>();
     final active = manager.tasks.where((t) => t.isActive).toList();
-    final finished = manager.tasks.where((t) => !t.isActive).toList();
+    // Failed / canceled / completed tasks — the history section. Before this
+    // existed the list was computed and then thrown away: a task that failed
+    // 2 seconds after starting simply DISAPPEARED, with its recorded error
+    // never shown anywhere. This was the "download vanishes silently" bug.
+    final history = manager.tasks.where((t) => !t.isActive).toList();
     final files = _filtered;
 
     return PopScope(
@@ -315,10 +345,10 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         if (!didPop && _selecting) setState(_selected.clear);
       },
       child: Scaffold(
-        appBar: _selecting ? _selectionBar(files) : _normalBar(finished.isEmpty),
+        appBar: _selecting ? _selectionBar(files) : _normalBar(history.isEmpty),
         body: RefreshIndicator(
           onRefresh: _refreshSaved,
-          child: _body(context, active, files),
+          child: _body(context, active, history, files),
         ),
       ),
     );
@@ -345,7 +375,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         ),
         if (!_searching && !_selecting)
           IconButton(icon: const Icon(Icons.refresh), tooltip: L.refresh, onPressed: _refreshSaved),
-        if (noQueue)
+        if (!noQueue)
           IconButton(
             icon: const Icon(Icons.clear_all),
             tooltip: L.clearAll,
@@ -408,9 +438,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     );
   }
 
-  Widget _body(BuildContext context, List<DownloadTask> active, List<SavedFile> files) {
+  Widget _body(BuildContext context, List<DownloadTask> active,
+      List<DownloadTask> history, List<SavedFile> files) {
     final theme = Theme.of(context);
-    final empty = active.isEmpty && files.isEmpty && !_loadingSaved;
+    final empty =
+        active.isEmpty && history.isEmpty && files.isEmpty && !_loadingSaved;
 
     if (empty) {
       return ListView(
@@ -447,6 +479,12 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         if (active.isNotEmpty) ...[
           _sectionHeader(context, '${L.activeDownloads} (${active.length})'),
           ...active.map((t) => DownloadTile(task: t)),
+        ],
+        if (history.isNotEmpty) ...[
+          _sectionHeader(context, '${L.historyTitle} (${history.length})'),
+          // failed / canceled / completed — retry & dismiss buttons live on
+          // the tile itself. A failure now STAYS on screen with its reason.
+          ...history.map((t) => DownloadTile(task: t)),
         ],
         if (!_loadingSaved && files.isNotEmpty) ...[
           _sectionHeader(context, '${L.savedFiles} (${files.length})'),

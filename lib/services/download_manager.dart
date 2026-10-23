@@ -408,10 +408,15 @@ class DownloadManager extends ChangeNotifier {
           }
           resolved = true;
         } on DioException catch (e) {
-          final code = e.response?.statusCode;
-          final stalled = e.type == DioExceptionType.cancel && !_stopIntent.containsKey(task.id);
-          if (!_stopIntent.containsKey(task.id) && (stalled || code == 403 || code == 401 || code == 410 || code == 404)) {
-            CrashLog.write('FAST-START $code — switching to client ladder (tag ${task.option.videoTag})');
+          // ANY fast-path failure hands over to the client ladder — the
+          // preset URLs are one shot only. This used to accept ONLY
+          // 403/401/410/404, so a plain connection hiccup (connectionError,
+          // socket reset — routine on mobile data) RETHREW and killed the
+          // task in ~2 seconds while the ladder sat right below, unused.
+          if (!_stopIntent.containsKey(task.id)) {
+            final code = e.response?.statusCode;
+            CrashLog.write(
+                'FAST-START ${e.type}${code == null ? '' : ' $code'} — switching to client ladder (tag ${task.option.videoTag})');
             audioPath = null;
           } else {
             rethrow;
@@ -481,6 +486,25 @@ class DownloadManager extends ChangeNotifier {
         } on TimeoutException {
           if (!isLastClient && !_stopIntent.containsKey(task.id)) {
             CrashLog.write('manifest timeout from client ${_clientName(client)} — switching client');
+            continue;
+          }
+          rethrow;
+        } on YoutubeExplodeException catch (e) {
+          // youtube_explode runs on package:http, NOT dio — its failures
+          // (VideoUnplayable, TransientFailure, rate limits, innertube 4xx)
+          // are NOT DioExceptions. They used to escape this ladder entirely
+          // and kill the task within ~2 seconds. Next client instead.
+          if (!isLastClient && !_stopIntent.containsKey(task.id)) {
+            CrashLog.write('manifest ${e.runtimeType} from client ${_clientName(client)} — switching client');
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            continue;
+          }
+          rethrow;
+        } on SocketException {
+          // Raw socket failure while fetching the manifest — same policy.
+          if (!isLastClient && !_stopIntent.containsKey(task.id)) {
+            CrashLog.write('manifest socket error from client ${_clientName(client)} — switching client');
+            await Future<void>.delayed(const Duration(milliseconds: 400));
             continue;
           }
           rethrow;
@@ -591,12 +615,20 @@ class DownloadManager extends ChangeNotifier {
       if (wasCanceled && intent == 'pause') {
         task.speedBps = 0;
         _set(task, DownloadStatus.paused);
-      } else if (wasCanceled) {
+      } else if (wasCanceled && intent == 'cancel') {
         _cleanupParts(task);
         _set(task, DownloadStatus.canceled);
       } else {
         task.speedBps = 0;
-        if (e is DioException && e.response?.statusCode == 403) {
+        if (wasCanceled) {
+          // Canceled with NO user intent = the stall watchdog gave up on a
+          // dead connection after every retry. This used to be recorded as
+          // "canceled" — a state the user never asked for and, before the
+          // history section existed, it vanished from the UI entirely. It
+          // is a FAILURE: keep the resume bytes, show retry.
+          CrashLog.write('DL dead connection (stall watchdog) — failing visibly: ${task.title}');
+          task.error = L.downloadFailedGeneric;
+        } else if (e is DioException && e.response?.statusCode == 403) {
           CrashLog.write('DOWNLOAD 403: ${task.title}', e.stackTrace);
           task.error = L.streamRejected;
         } else {
