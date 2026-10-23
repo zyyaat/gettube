@@ -322,12 +322,25 @@ class StorageService {
   }
 
   /// Removes *.part leftovers and temp outputs from aborted runs.
-  static Future<void> clearTemps() async {
+  /// Deletes temp files whose task no longer exists (orphans from finished,
+  /// failed or removed downloads). Files of ACTIVE/known tasks are KEPT —
+  /// this used to wipe the whole dl/ folder on every launch, destroying the
+  /// resumable bytes of interrupted downloads.
+  static Future<void> clearTemps({List<String> keepTaskIds = const []}) async {
     try {
       final tmp = await getTemporaryDirectory();
       final dl = Directory('${tmp.path}/dl');
-      if (dl.existsSync()) {
-        dl.deleteSync(recursive: true);
+      if (!dl.existsSync()) return;
+      final keep = keepTaskIds.toSet();
+      for (final e in dl.listSync()) {
+        if (e is! File) continue;
+        final name = e.uri.pathSegments.last;
+        final orphan = !keep.any((id) => id.isNotEmpty && name.startsWith(id));
+        if (orphan) {
+          try {
+            e.deleteSync();
+          } catch (_) {}
+        }
       }
     } catch (_) {}
   }

@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -48,6 +50,60 @@ class DownloadManager extends ChangeNotifier {
   String? customTreeUri;
   String customFolderLabel = '';
   bool mobileDataAllowed = true;
+
+  // ---------------- queue persistence ----------------
+  // FIX for "the download VANISHES with no error": the queue used to live
+  // only in RAM. Android kills background processes all the time (memory
+  // pressure, user swipes the app away) — every running download then
+  // silently disappeared. Now every status change is persisted, and on the
+  // next launch the queue is restored: finished/failed tasks stay visible,
+  // interrupted ones return to `queued` and resume FROM DISK (single-stream
+  // Range or .lenN sidecars) without losing a byte.
+  static const String _queueKey = 'queue_persist_v2';
+  bool _restored = false;
+
+  Future<void> _persist() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+          _queueKey, tasks.map((t) => jsonEncode(t.toJson())).toList());
+    } catch (e) {
+      CrashLog.write('queue persist failed: $e');
+    }
+  }
+
+  /// Call ONCE after app launch (after Flutter bindings are ready).
+  /// Restores the queue from the last run and restarts interrupted work —
+  /// so a killed process turns into a visible, resuming queue instead of
+  /// a silent disappearance.
+  Future<void> restoreQueue() async {
+    if (_restored) return;
+    _restored = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getStringList(_queueKey) ?? [];
+      for (final line in raw) {
+        try {
+          final t = DownloadTask.fromJson(jsonDecode(line) as Map<String, dynamic>);
+          if (t.id.isEmpty || tasks.any((x) => x.id == t.id)) continue;
+          // Anything that was mid-flight belongs back in the queue — the
+          // engine resumes from the bytes already on disk.
+          if (t.isActive || t.status == DownloadStatus.waitingForWifi) {
+            t.status = DownloadStatus.queued;
+            t.received = 0;
+          }
+          tasks.add(t);
+        } catch (_) {
+          // one corrupt entry must not kill the whole restore
+        }
+      }
+      tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      notifyListeners();
+      _pump(); // resume interrupted downloads right away
+    } catch (e) {
+      CrashLog.write('queue restore failed: $e');
+    }
+  }
 
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -130,6 +186,7 @@ class DownloadManager extends ChangeNotifier {
 
     tasks.insert(0, task);
     notifyListeners();
+    unawaited(_persist());
     // START THE QUEUE NOW — permissions must never gate the download (a hung
     // permission dialog used to strand tasks in "waiting" forever).
     _pump();
@@ -207,12 +264,14 @@ class DownloadManager extends ChangeNotifier {
     } else {
       tasks.remove(t);
       notifyListeners();
+      unawaited(_persist());
     }
   }
 
   void clearFinished() {
     tasks.removeWhere((t) => !t.isActive);
     notifyListeners();
+    unawaited(_persist());
   }
 
   /// Re-evaluates the queue right now (called when a relevant setting
@@ -863,6 +922,18 @@ class DownloadManager extends ChangeNotifier {
     final outFile = File(savePath);
     RandomAccessFile raf;
     try {
+      // Fully downloaded in a previous run (merge was pending when the
+      // process got killed)? The .part file then has the EXACT total size
+      // and no sidecars — treat it as complete, nothing to fetch.
+      if (outFile.existsSync() &&
+          outFile.lengthSync() == total &&
+          !List.generate(_segments, (i) => File(lenPath(i))).any((f) => f.existsSync())) {
+        if (counted) {
+          task.received = task.total;
+          notifyListeners();
+        }
+        return;
+      }
       // append (keeps earlier bytes when resuming) then pin the exact size —
       // a sparse preallocation on Android, instant even for 4K files.
       raf = outFile.openSync(mode: FileMode.append);
@@ -1042,6 +1113,10 @@ class DownloadManager extends ChangeNotifier {
   void _set(DownloadTask t, DownloadStatus s) {
     t.status = s;
     notifyListeners();
+    // Persist on every STATE change (rare, cheap) — progress counters are
+    // NOT persisted because they are re-derived from the bytes on disk
+    // when a killed run resumes.
+    unawaited(_persist());
   }
 
   void _cleanupParts(DownloadTask t) {

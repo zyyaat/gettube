@@ -77,7 +77,15 @@ class _BootstrapAppState extends State<BootstrapApp> {
       // s.load() already applies every setting (incl. save location and
       // mobile-data gate) to the download engine — nothing extra to copy.
 
-      await StorageService.clearTemps();
+      // Restore the queue BEFORE any temp cleanup: interrupted downloads
+      // come back visibly and resume from the bytes already on disk, and
+      // clearTemps then deletes ONLY files whose task no longer exists
+      // (it used to wipe the whole dl/ folder — destroying every
+      // resumable .part on each launch).
+      await DownloadManager.instance.restoreQueue();
+      await StorageService.clearTemps(
+        keepTaskIds: DownloadManager.instance.tasks.map((t) => t.id).toList(),
+      );
       unawaited(NotificationService.init());
 
       if (mounted) {
