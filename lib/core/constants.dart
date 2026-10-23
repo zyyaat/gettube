@@ -12,15 +12,15 @@ class AppColors {
 }
 
 /// App metadata.
-/// ⚠️ Keep [version] and [buildTag] in sync with pubspec.yaml (`1.0.17+18`)
-/// and the CI tag (`build-28`) — UpdateService compares [buildTag] against
+/// ⚠️ Keep [version] and [buildTag] in sync with pubspec.yaml (`1.0.18+19`)
+/// and the CI tag (`build-30`) — UpdateService compares [buildTag] against
 /// the newest GitHub tag to tell users an update exists.
 class AppMeta {
   AppMeta._();
 
   static const String name = 'GetTube';
-  static const String version = '1.0.17';
-  static const int buildTag = 28;
+  static const String version = '1.0.18';
+  static const int buildTag = 30;
 }
 
 /// Sub-directories used to organize saved media.
